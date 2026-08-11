@@ -8,14 +8,11 @@ import type {
   InlineContentSchema,
   StyleSchema,
 } from "../../../../schema/index.js";
-import { getNodeById } from "../../../nodeUtil.js";
 import { blockToNode } from "../../../nodeConversions/blockToNode.js";
 import { nodeToBlock } from "../../../nodeConversions/nodeToBlock.js";
 import { getPmSchema } from "../../../pmUtil.js";
-import {
-  fixContainer,
-  isContainerNode,
-} from "../../containers/fixContainer.js";
+import { fixContainersById } from "../../containers/fixContainer.js";
+import { getAncestorContainers } from "../../containers/containerNav.js";
 
 export function removeAndInsertBlocks<
   BSchema extends BlockSchema,
@@ -91,14 +88,9 @@ export function removeAndInsertBlocks<
 
     const $pos = tr.doc.resolve(pos - removedSize);
 
-    for (let depth = $pos.depth; depth > 0; depth--) {
-      const ancestor = $pos.node(depth);
-      if (
-        isContainerNode(ancestor.type) &&
-        ancestor.attrs.id &&
-        !containersToFix.some((c) => c.id === ancestor.attrs.id)
-      ) {
-        containersToFix.push({ id: ancestor.attrs.id, depth });
+    for (const container of getAncestorContainers($pos.doc, $pos.pos)) {
+      if (!containersToFix.some((c) => c.id === container.id)) {
+        containersToFix.push(container);
       }
     }
 
@@ -132,23 +124,11 @@ export function removeAndInsertBlocks<
   }
 
   // Repairs the containers the removed blocks lived in (e.g. collapses
-  // emptied columns/columnLists). Callers where the removal isn't a deletion
-  // can opt out - e.g. `moveBlocks` re-inserts the blocks elsewhere and
-  // deliberately leaves emptied containers as-is. Runs deepest-first,
-  // re-locating each container by id, so a repair that removes or unwraps a
-  // nested container is simply skipped at the ancestor level if the ancestor
-  // was affected (and ancestors are re-checked in their own pass).
+  // emptied columns/columnLists), deepest-first. Callers where the removal
+  // isn't a deletion can opt out - e.g. `moveBlocks` re-inserts the blocks
+  // elsewhere and deliberately leaves emptied containers as-is.
   if (options.fixContainers !== false) {
-    [...containersToFix]
-      .sort((a, b) => b.depth - a.depth)
-      .forEach(({ id }) => {
-        const target = getNodeById(id, tr.doc);
-        if (!target) {
-          // Already removed by a deeper repair.
-          return;
-        }
-        fixContainer(tr, target.posBeforeNode);
-      });
+    fixContainersById(tr, containersToFix);
   }
 
   // Converts the nodes created from `blocksToInsert` into full `Block`s.

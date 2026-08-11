@@ -7,7 +7,6 @@ import {
 } from "@tiptap/pm/model";
 import { NodeView } from "@tiptap/pm/view";
 import { nodeToBlock } from "../../api/nodeConversions/nodeToBlock.js";
-import { isContainerNode } from "../../api/blockManipulation/containers/fixContainer.js";
 import { mergeParagraphs } from "../../blocks/defaultBlockHelpers.js";
 import { ignoreNonContentMutations } from "../nodeViewMutations.js";
 import {
@@ -18,9 +17,15 @@ import { nonFormattingMarks } from "../markGroups.js";
 import { suggestionMarks } from "../../pm-nodes/suggestionMarks.js";
 import { PropSchema } from "../propTypes.js";
 import {
+  CONTAINER_NODE_PRIORITY,
   childBlocksContentExpression,
-  getBlockFromNodeView,
   getChildBlocksConfig,
+  isTopLevelContainer,
+} from "./childBlocks.js";
+import {
+  applyContainerAttributes,
+  applyDOMAttributes,
+  getBlockFromNodeView,
   propsToAttributes,
   wrapInBlockStructure,
 } from "./internal.js";
@@ -30,9 +35,25 @@ import {
   BlockImplementation,
   BlockImplementationOrCreator,
   BlockSpec,
-  ChildBlocksConfig,
   LooseBlockSpec,
 } from "./types.js";
+
+/**
+ * Full-schema context that node construction needs but a single block spec
+ * can't know on its own.
+ */
+export type BlockSchemaContext = {
+  isContainerBlockType: (blockType: string) => boolean;
+};
+
+const NO_SCHEMA_CONTEXT: BlockSchemaContext = {
+  isContainerBlockType: (blockType) => {
+    throw new Error(
+      `Cannot resolve whether "${blockType}" is a container block without full schema context. ` +
+        "Blocks that use `childBlocks.allowedBlocks` must be registered through `BlockNoteSchema.create`.",
+    );
+  },
+};
 
 // Function that causes events within non-selectable blocks to be handled by the
 // browser instead of the editor.
@@ -176,107 +197,199 @@ export function getParseRules<
 function buildContainerNode<TName extends string, TProps extends PropSchema>(
   blockConfig: BlockConfig<TName, TProps, "none">,
   blockImplementation: BlockImplementation<TName, TProps, "none">,
-  childBlocksConfig: ChildBlocksConfig,
-  isContainerType?: (type: string) => boolean,
+  schemaContext: BlockSchemaContext,
 ) {
+  const childBlocks = getChildBlocksConfig(blockConfig)!;
+
+  const groups = ["bnBlock", "childContainer"];
+  if (isTopLevelContainer(childBlocks)) {
+    groups.push("blockGroupChild");
+  }
+
   return Node.create({
     name: blockConfig.type,
-    content: childBlocksContentExpression(childBlocksConfig, isContainerType),
-    group:
-      childBlocksConfig.topLevel === false
-        ? "bnBlock childContainer"
-        : "bnBlock childContainer blockGroupChild",
-    // All bnBlock-group structural nodes allow the block-level suggestion marks
-    // (see Doc, BlockGroup, BlockContainer, Table), so a whole container can be
-    // marked inserted/deleted/modified in suggestion mode. Resolved
-    // conditionally so a plain editor without those marks doesn't reference an
-    // unknown mark group.
+    content: childBlocksContentExpression(
+      childBlocks,
+      schemaContext.isContainerBlockType,
+    ),
+    group: groups.join(" "),
     marks() {
       return suggestionMarks(this.editor);
     },
     selectable: blockImplementation.meta?.selectable ?? true,
     isolating: blockImplementation.meta?.isolating ?? true,
     defining: true,
-    // Hardcoded priority 40 (matches the historical Column/ColumnList shape).
-    // Why hardcoded and ignoring the caller-supplied priority? Because PM's
-    // `fillBefore` picks the FIRST type in an or-expression / group when
-    // auto-filling a non-optional node. With `blockGroupChild+` content
-    // (which includes containers themselves), if a container appeared first
-    // in the schema's `nodes` map, PM would try to auto-fill empty
-    // containers with another container and stack-overflow. We need
-    // `blockContainer` (priority 50, registered later) to come BEFORE
-    // container blocks in the schema map. Tiptap registers higher-priority
-    // extensions earlier, so we want our priority to be LOWER than 50.
-    // The schema layer passes its own per-block priority (~101) but we
-    // override it here for cycle-safety.
-    priority: 40,
+    priority: CONTAINER_NODE_PRIORITY,
     addAttributes() {
       return propsToAttributes(blockConfig.propSchema);
     },
 
     parseHTML() {
-      const rules: TagParseRule[] = [
+      return [
         {
-          tag: "*",
-          getAttrs: (element) => {
-            if (typeof element === "string") {
-              return false;
-            }
-            if (element.getAttribute("data-node-type") === blockConfig.type) {
-              return {};
-            }
-            return false;
-          },
+          tag: `[data-node-type=${blockConfig.type}]`,
         },
       ];
-
-      if (blockImplementation.parse) {
-        rules.push({
-          tag: "*",
-          getAttrs(node) {
-            if (typeof node === "string") {
-              return false;
-            }
-            const props = blockImplementation.parse?.(node);
-            if (props === undefined) {
-              return false;
-            }
-            return props;
-          },
-          preserveWhitespace: true,
-        });
-      }
-
-      return rules;
     },
 
     renderHTML({ HTMLAttributes }) {
-      const div = document.createElement("div");
-      div.setAttribute("data-node-type", blockConfig.type);
+      const dom = document.createElement("div");
+      dom.setAttribute("data-node-type", blockConfig.type);
       for (const [attribute, value] of Object.entries(HTMLAttributes)) {
-        div.setAttribute(attribute, value as any);
+        dom.setAttribute(attribute, value as string);
       }
-      return {
-        dom: div,
-        contentDOM: div,
-      };
+      return { dom, contentDOM: dom };
     },
 
     addNodeView() {
       return (props) => {
         const editor = this.options.editor;
-        // For container blocks the PM node IS the bnBlock (no blockContainer
-        // wrapper), so the id lives on `props.node.attrs.id` directly. We
-        // can't use getBlockFromPos here because it walks up to the parent.
-        const blockIdentifier = (props.node.attrs as Record<string, any>).id;
-        if (!blockIdentifier) {
-          throw new Error(
-            `Container block "${blockConfig.type}" is missing an id attribute. Make sure it is registered with UniqueID.`,
-          );
+
+        // A container's node *is* the block — convert directly rather than
+        // walking up to a parent (which would find the enclosing block).
+        const block = nodeToBlock(props.node, props.view.state.doc);
+
+        const nodeView = blockImplementation.render.call(
+          {
+            blockContentDOMAttributes:
+              this.options.domAttributes?.blockContent || {},
+            props,
+            renderType: "nodeView",
+            propSchema: blockConfig.propSchema,
+          },
+          block as any,
+          editor as any,
+        );
+
+        applyContainerAttributes(
+          nodeView.dom,
+          blockConfig.type,
+          block.props as any,
+          blockConfig.propSchema,
+          block.id,
+        );
+
+        const typedNodeView = nodeView as unknown as NodeView;
+
+        if (blockImplementation.meta?.selectable === false) {
+          applyNonSelectableBlockFix(typedNodeView, this.editor);
         }
-        const block =
-          editor.getBlock(blockIdentifier) ??
-          nodeToBlock(props.node, editor.prosemirrorView.state.doc);
+
+        ignoreNonContentMutations(typedNodeView);
+
+        // Unlike regular blocks, containers honor an `update` hook:
+        // recreating the node view would remount every child block, so a
+        // container patches its own DOM in place instead.
+        const update = typedNodeView.update?.bind(typedNodeView);
+        if (update) {
+          typedNodeView.update = (node, decorations, innerDecorations) => {
+            if (node.type.name !== blockConfig.type) {
+              return false;
+            }
+            if (update(node, decorations, innerDecorations) === false) {
+              return false;
+            }
+            applyContainerAttributes(
+              typedNodeView.dom,
+              blockConfig.type,
+              nodeToBlock(node, props.view.state.doc).props as any,
+              blockConfig.propSchema,
+              node.attrs.id,
+            );
+            return true;
+          };
+        }
+
+        return typedNodeView;
+      };
+    },
+  });
+}
+
+function buildRegularNode<
+  TName extends string,
+  TProps extends PropSchema,
+  TContent extends "inline" | "none" | "table" | "plain",
+>(
+  blockConfig: BlockConfig<TName, TProps, TContent>,
+  blockImplementation: BlockImplementation<TName, TProps, TContent>,
+  priority?: number,
+) {
+  return Node.create({
+    name: blockConfig.type,
+    content: (blockConfig.content === "inline"
+      ? "inline*"
+      : blockConfig.content === "plain"
+        ? "text*"
+        : blockConfig.content === "none"
+          ? ""
+          : blockConfig.content) as TContent extends "inline"
+      ? "inline*"
+      : TContent extends "plain"
+        ? "text*"
+        : "",
+    // "plain" blocks hold unstyled text, so they disallow formatting marks.
+    // They still allow the non-formatting marks (comments and
+    // suggestions/diffs) — those annotate content without changing it and are
+    // ignored by the block model. `nonFormattingMarks` resolves the group only
+    // when at least one such mark is registered, so a plain block in an editor
+    // without any of them doesn't reference an empty (unknown) mark group.
+    marks() {
+      return blockConfig.content === "plain"
+        ? nonFormattingMarks(this.editor)
+        : undefined;
+    },
+    group: "blockContent",
+    selectable: blockImplementation.meta?.selectable ?? true,
+    isolating: blockImplementation.meta?.isolating ?? true,
+    code: blockImplementation.meta?.code ?? false,
+    defining: blockImplementation.meta?.defining ?? true,
+    priority,
+    addAttributes() {
+      return propsToAttributes(blockConfig.propSchema);
+    },
+
+    parseHTML() {
+      return getParseRules(blockConfig, blockImplementation);
+    },
+
+    renderHTML({ HTMLAttributes }) {
+      // renderHTML is used for copy/pasting content from the editor back into
+      // the editor, so we need to make sure the `blockContent` element is
+      // structured correctly as this is what's used for parsing blocks. We
+      // just render a placeholder div inside as the `blockContent` element
+      // already has all the information needed for proper parsing.
+      const div = document.createElement("div");
+      return wrapInBlockStructure(
+        {
+          dom: div,
+          contentDOM:
+            blockConfig.content === "inline" || blockConfig.content === "plain"
+              ? div
+              : undefined,
+        },
+        blockConfig.type,
+        {},
+        blockConfig.propSchema,
+        blockImplementation.meta?.fileBlockAccept !== undefined,
+        HTMLAttributes,
+      );
+    },
+
+    addNodeView() {
+      return (props) => {
+        // Gets the BlockNote editor instance
+        const editor = this.options.editor;
+        // Gets the block. Resolving this can't rely on `getPos()` alone —
+        // node views are constructed part-way through ProseMirror's
+        // reconciliation, where positions don't always line up with
+        // `view.state.doc` yet (see `getBlockFromNodeView`).
+        const block = getBlockFromNodeView(
+          props.getPos,
+          props.node,
+          props.view.state.doc,
+        );
+        // Gets the custom HTML attributes for `blockContent` nodes
         const blockContentDOMAttributes =
           this.options.domAttributes?.blockContent || {};
 
@@ -289,18 +402,26 @@ function buildContainerNode<TName extends string, TProps extends PropSchema>(
           },
           block as any,
           editor as any,
-        ) as unknown as NodeView;
+        );
+
+        // Cast needed because render returns `dom: HTMLElement | DocumentFragment`
+        // but tiptap's NodeView expects `dom: HTMLElement`
+        const typedNodeView = nodeView as unknown as NodeView;
 
         if (blockImplementation.meta?.selectable === false) {
-          applyNonSelectableBlockFix(nodeView, this.editor);
+          applyNonSelectableBlockFix(typedNodeView, this.editor);
         }
 
         // Ignores DOM mutations that don't affect the block's content, so
         // that browser extensions which rewrite the DOM (e.g. Dark Reader)
         // can't trigger an infinite re-render loop that freezes the tab.
-        ignoreNonContentMutations(nodeView);
+        ignoreNonContentMutations(typedNodeView);
 
-        return nodeView;
+        // See explanation for why `update` is not implemented for NodeViews
+        // https://github.com/TypeCellOS/BlockNote/pull/1904#discussion_r2313461464
+        // TODO: in a future version, we might want to implement updates so that
+        // vanilla blocks don't always re-render entirely (https://github.com/TypeCellOS/BlockNote/issues/220)
+        return typedNodeView;
       };
     },
   });
@@ -317,13 +438,8 @@ export function addNodeAndExtensionsToSpec<
   blockImplementation: BlockImplementation<TName, TProps, TContent>,
   extensions?: (ExtensionFactoryInstance | Extension)[],
   priority?: number,
-  // Resolves whether a block type is a container-type block. Provided by
-  // schema creation (which knows the full spec set); required to resolve
-  // `childBlocks.allowedBlocks` into a content expression.
-  isContainerType?: (type: string) => boolean,
+  schemaContext: BlockSchemaContext = NO_SCHEMA_CONTEXT,
 ): LooseBlockSpec<TName, TProps, TContent> {
-  // Resolve the `childBlocks: true` shorthand at read time — the user's
-  // config object is never mutated (see `getChildBlocksConfig`).
   const childBlocksConfig = getChildBlocksConfig(blockConfig);
 
   if (childBlocksConfig && blockConfig.content !== "none") {
@@ -331,6 +447,8 @@ export function addNodeAndExtensionsToSpec<
       `Block "${blockConfig.type}" sets \`childBlocks\` but its \`content\` is "${blockConfig.content}". Container blocks must declare \`content: "none"\`.`,
     );
   }
+
+  const isContainer = childBlocksConfig !== undefined;
 
   const node =
     ((blockImplementation as any).node as Node) ||
@@ -342,120 +460,9 @@ export function addNodeAndExtensionsToSpec<
             TProps,
             "none"
           >,
-          childBlocksConfig,
-          isContainerType,
+          schemaContext,
         )
-      : Node.create({
-          name: blockConfig.type,
-          content: (blockConfig.content === "inline"
-            ? "inline*"
-            : blockConfig.content === "plain"
-              ? "text*"
-              : blockConfig.content === "none"
-                ? ""
-                : blockConfig.content) as TContent extends "inline"
-            ? "inline*"
-            : TContent extends "plain"
-              ? "text*"
-              : "",
-          // "plain" blocks hold unstyled text, so they disallow formatting marks.
-          // They still allow the non-formatting marks (comments and
-          // suggestions/diffs) — those annotate content without changing it and are
-          // ignored by the block model. `nonFormattingMarks` resolves the group only
-          // when at least one such mark is registered, so a plain block in an editor
-          // without any of them doesn't reference an empty (unknown) mark group.
-          marks() {
-            return blockConfig.content === "plain"
-              ? nonFormattingMarks(this.editor)
-              : undefined;
-          },
-          group: "blockContent",
-          selectable: blockImplementation.meta?.selectable ?? true,
-          isolating: blockImplementation.meta?.isolating ?? true,
-          code: blockImplementation.meta?.code ?? false,
-          defining: blockImplementation.meta?.defining ?? true,
-          priority,
-          addAttributes() {
-            return propsToAttributes(blockConfig.propSchema);
-          },
-
-          parseHTML() {
-            return getParseRules(blockConfig, blockImplementation);
-          },
-
-          renderHTML({ HTMLAttributes }) {
-            // renderHTML is used for copy/pasting content from the editor back into
-            // the editor, so we need to make sure the `blockContent` element is
-            // structured correctly as this is what's used for parsing blocks. We
-            // just render a placeholder div inside as the `blockContent` element
-            // already has all the information needed for proper parsing.
-            const div = document.createElement("div");
-            return wrapInBlockStructure(
-              {
-                dom: div,
-                contentDOM:
-                  blockConfig.content === "inline" ||
-                  blockConfig.content === "plain"
-                    ? div
-                    : undefined,
-              },
-              blockConfig.type,
-              {},
-              blockConfig.propSchema,
-              blockImplementation.meta?.fileBlockAccept !== undefined,
-              HTMLAttributes,
-            );
-          },
-
-          addNodeView() {
-            return (props) => {
-              // Gets the BlockNote editor instance
-              const editor = this.options.editor;
-              // Gets the block. Resolving this can't rely on `getPos()` alone —
-              // node views are constructed part-way through ProseMirror's
-              // reconciliation, where positions don't always line up with
-              // `view.state.doc` yet (see `getBlockFromNodeView`).
-              const block = getBlockFromNodeView(
-                props.getPos,
-                props.node,
-                props.view.state.doc,
-              );
-              // Gets the custom HTML attributes for `blockContent` nodes
-              const blockContentDOMAttributes =
-                this.options.domAttributes?.blockContent || {};
-
-              const nodeView = blockImplementation.render.call(
-                {
-                  blockContentDOMAttributes,
-                  props,
-                  renderType: "nodeView",
-                  propSchema: blockConfig.propSchema,
-                },
-                block as any,
-                editor as any,
-              );
-
-              // Cast needed because render returns `dom: HTMLElement | DocumentFragment`
-              // but tiptap's NodeView expects `dom: HTMLElement`
-              const typedNodeView = nodeView as unknown as NodeView;
-
-              if (blockImplementation.meta?.selectable === false) {
-                applyNonSelectableBlockFix(typedNodeView, this.editor);
-              }
-
-              // Ignores DOM mutations that don't affect the block's content, so
-              // that browser extensions which rewrite the DOM (e.g. Dark Reader)
-              // can't trigger an infinite re-render loop that freezes the tab.
-              ignoreNonContentMutations(typedNodeView);
-
-              // See explanation for why `update` is not implemented for NodeViews
-              // https://github.com/TypeCellOS/BlockNote/pull/1904#discussion_r2313461464
-              // TODO: in a future version, we might want to implement updates so that
-              // vanilla blocks don't always re-render entirely (https://github.com/TypeCellOS/BlockNote/issues/220)
-              return typedNodeView;
-            };
-          },
-        }));
+      : buildRegularNode(blockConfig, blockImplementation, priority));
 
   if (node.name !== blockConfig.type) {
     throw new Error(
@@ -472,7 +479,7 @@ export function addNodeAndExtensionsToSpec<
         const blockContentDOMAttributes =
           node.options.domAttributes?.blockContent || {};
 
-        return blockImplementation.render.call(
+        const output = blockImplementation.render.call(
           {
             blockContentDOMAttributes,
             props: undefined,
@@ -482,6 +489,18 @@ export function addNodeAndExtensionsToSpec<
           block as any,
           editor as any,
         );
+
+        if (isContainer) {
+          applyContainerAttributes(
+            output.dom,
+            blockConfig.type,
+            block.props as any,
+            blockConfig.propSchema,
+            block.id,
+          );
+        }
+
+        return output;
       },
       // TODO: this should not have wrapInBlockStructure and generally be a lot simpler
       // post-processing in externalHTMLExporter should not be necessary
@@ -489,7 +508,7 @@ export function addNodeAndExtensionsToSpec<
         const blockContentDOMAttributes =
           node.options.domAttributes?.blockContent || {};
 
-        return (
+        const output =
           blockImplementation.toExternalHTML?.call(
             { blockContentDOMAttributes, propSchema: blockConfig.propSchema },
             block as any,
@@ -505,8 +524,19 @@ export function addNodeAndExtensionsToSpec<
             },
             block as any,
             editor as any,
-          )
-        );
+          );
+
+        if (output && isContainer) {
+          applyContainerAttributes(
+            output.dom,
+            blockConfig.type,
+            block.props as any,
+            blockConfig.propSchema,
+            block.id,
+          );
+        }
+
+        return output;
       },
     },
     extensions,
@@ -617,6 +647,8 @@ export function createBlockSpec<
         : extensionsOrCreator
       : undefined;
 
+    const isContainer = getChildBlocksConfig(blockConfig) !== undefined;
+
     return {
       config: blockConfig,
       implementation: {
@@ -635,9 +667,8 @@ export function createBlockSpec<
             return undefined;
           }
 
-          // Container blocks own their outer DOM entirely (the PM node IS
-          // the bnBlock — no `blockContent` wrapper) — pass through.
-          if (isContainerNode(editor.pmSchema.nodes[block.type])) {
+          if (isContainer) {
+            applyDOMAttributes(output.dom, this.blockContentDOMAttributes);
             return output;
           }
 
@@ -660,7 +691,8 @@ export function createBlockSpec<
             editor as any,
           );
 
-          if (isContainerNode(editor.pmSchema.nodes[block.type])) {
+          if (isContainer) {
+            applyDOMAttributes(output.dom, this.blockContentDOMAttributes);
             return output;
           }
 

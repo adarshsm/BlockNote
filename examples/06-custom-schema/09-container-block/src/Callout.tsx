@@ -65,14 +65,7 @@ export const createCallout = createReactBlockSpec(
       };
 
       return (
-        // `ChildBlocksWrapper` is the root element for container blocks — it
-        // automatically applies the `data-node-type` / `data-id` / prop
-        // attributes BlockNote needs for HTML parsing and UI positioning.
-        <ChildBlocksWrapper
-          className={"callout"}
-          block={props.block}
-          editor={props.editor}
-        >
+        <ChildBlocksWrapper className={"callout"}>
           <button
             className={"callout-icon-button"}
             type={"button"}

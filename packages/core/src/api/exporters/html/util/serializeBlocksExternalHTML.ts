@@ -5,10 +5,10 @@ import type { BlockNoteEditor } from "../../../../editor/BlockNoteEditor.js";
 import {
   BlockImplementation,
   BlockSchema,
+  fillContainerAttributes,
   InlineContentSchema,
   StyleSchema,
 } from "../../../../schema/index.js";
-import { camelToDataKebab } from "../../../../util/string.js";
 import { UnreachableCaseError } from "../../../../util/typescript.js";
 import { isContainerNode } from "../../../blockManipulation/containers/fixContainer.js";
 import {
@@ -279,21 +279,12 @@ function serializeBlock<
       // props, in the same `data-*` convention `propsToAttributes` reads)
       // are present even when the block's render didn't add them.
       // Author-set attributes win.
-      const dom = ret.dom as HTMLElement;
-      if (!dom.hasAttribute("data-node-type")) {
-        dom.setAttribute("data-node-type", block.type!);
-      }
-      const propSchema =
-        editor.schema.blockSchema[block.type as any].propSchema;
-      for (const [propName, value] of Object.entries(props)) {
-        const attrName = camelToDataKebab(propName);
-        if (
-          value !== (propSchema as any)[propName]?.default &&
-          !dom.hasAttribute(attrName)
-        ) {
-          dom.setAttribute(attrName, String(value));
-        }
-      }
+      fillContainerAttributes(
+        ret.dom as HTMLElement,
+        block.type!,
+        props,
+        editor.schema.blockSchema[block.type as any].propSchema,
+      );
     }
     elementFragment.append(ret.dom);
     if (nestingLevel > 0) {

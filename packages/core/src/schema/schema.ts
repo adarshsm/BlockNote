@@ -16,7 +16,8 @@ import {
   getInlineContentSchemaFromSpecs,
   getStyleSchemaFromSpecs,
 } from "./index.js";
-import { isContainerType } from "./blocks/internal.js";
+import { isContainerType } from "./blocks/childBlocks.js";
+import type { BlockSchemaContext } from "./blocks/createSpec.js";
 import { validateChildBlocksConfigs } from "./blocks/validateChildBlocks.js";
 
 function removeUndefined<T extends Record<string, any> | undefined>(obj: T): T {
@@ -93,16 +94,24 @@ export class CustomBlockNoteSchema<
       })),
     );
 
-    // Resolves whether a block type is a container-type block, bound to this
-    // schema's spec set (see `isContainerType`). Threaded into the spec
-    // machinery as a single-arg callback.
-    const resolveIsContainerType = (type: string): boolean =>
-      isContainerType(this.opts.blockSpecs as any, type);
-
-    validateChildBlocksConfigs(
-      this.opts.blockSpecs as any,
-      resolveIsContainerType,
+    // Container-ness is needed to build *other* blocks' nodes (a container's
+    // `allowedBlocks` maps block types to node terms, and only container types
+    // are their own node type), so it's resolved across the whole schema up
+    // front. Validation runs first so misconfigurations surface as clear errors
+    // rather than as opaque ProseMirror ones.
+    const blockConfigs = Object.fromEntries(
+      Object.entries(this.opts.blockSpecs).map(([key, blockSpec]) => [
+        key,
+        blockSpec.config,
+      ]),
     );
+
+    validateChildBlocksConfigs(blockConfigs);
+
+    const schemaContext: BlockSchemaContext = {
+      isContainerBlockType: (blockType) =>
+        !!blockConfigs[blockType] && isContainerType(blockConfigs[blockType]),
+    };
 
     const blockSpecs = Object.fromEntries(
       Object.entries(this.opts.blockSpecs).map(([key, blockSpec]) => {
@@ -113,7 +122,7 @@ export class CustomBlockNoteSchema<
             blockSpec.implementation,
             blockSpec.extensions,
             getPriority(key),
-            resolveIsContainerType,
+            schemaContext,
           ),
         ];
       }),

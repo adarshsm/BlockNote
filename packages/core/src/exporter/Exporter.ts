@@ -8,8 +8,8 @@ import {
   StyleSchema,
   StyledText,
   Styles,
-  isContainerType,
 } from "../schema/index.js";
+import { isContainerType } from "../schema/blocks/childBlocks.js";
 
 import type {
   BlockMapping,
@@ -69,7 +69,10 @@ export abstract class Exporter<
    * after the container's own output.
    */
   public isContainerBlock(blockType: string): boolean {
-    return isContainerType(this.blockNoteSchema.blockSpecs, blockType);
+    const spec = (this.blockNoteSchema.blockSpecs as Record<string, any>)[
+      blockType
+    ];
+    return !!spec && isContainerType(spec.config);
   }
 
   public async resolveFile(url: string) {

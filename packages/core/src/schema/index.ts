@@ -1,3 +1,4 @@
+export * from "./blocks/childBlocks.js";
 export * from "./blocks/createSpec.js";
 export * from "./blocks/internal.js";
 export * from "./blocks/types.js";

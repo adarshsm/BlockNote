@@ -6,95 +6,19 @@ import type { ExtensionFactoryInstance } from "../../editor/BlockNoteExtension.j
 import { mergeCSSClasses } from "../../util/browser.js";
 import { camelToDataKebab } from "../../util/string.js";
 import { PropSchema, Props } from "../propTypes.js";
-import { BlockConfig, ChildBlocksConfig, LooseBlockSpec } from "./types.js";
+import { ChildBlocksConfig, LooseBlockSpec } from "./types.js";
 
-// Normalizes the `childBlocks: true` shorthand at read time. Downstream code
-// must use this instead of reading `config.childBlocks` directly — the user's
-// config object is never mutated, so `blockSchema[type]` identity checks
-// (e.g. `checkMultiColumnBlocksInSchema`) stay valid across schema instances.
-export function getChildBlocksConfig(
-  config: Pick<BlockConfig, "childBlocks">,
-): ChildBlocksConfig | undefined {
-  return config.childBlocks === true ? {} : config.childBlocks;
-}
-
-// Whether a block *type* is a container block, resolved from the block spec
-// set alone (no compiled PM schema needed) — a type is a container if it
-// declares `childBlocks`, or if its hand-written tiptap node is in the
-// `bnBlock` group. Use this when you only hold the spec set (schema
-// construction, the exporter); when you hold a live PM `NodeType` use
-// `isContainerNode`, and when you already have the block config use
-// `getChildBlocksConfig`.
-export function isContainerType(
-  // Loosely typed: the block spec's tiptap `node` has a complex tiptap type
-  // that doesn't structurally match a narrow shape, and only `config` /
-  // `node.config.group` are read defensively here.
-  blockSpecs: Record<string, any>,
-  type: string,
-): boolean {
-  const spec = blockSpecs[type];
-  if (!spec) {
-    return false;
-  }
-  if (getChildBlocksConfig(spec.config)) {
-    return true;
-  }
-  const group = spec.implementation?.node?.config?.group;
-  return typeof group === "string" && group.split(/\s+/).includes("bnBlock");
-}
-
-// Builds the ProseMirror content expression for a container block from its
-// `childBlocks` config.
-//
-// `allowedBlocks` entries are BlockNote block types, but container children
-// are PM *nodes*: container-type blocks are their own node type, while every
-// regular block lives inside a `blockContainer` node. So container entries
-// are kept verbatim and regular entries collapse to a single `blockContainer`
-// term. `blockContainer` is deliberately ordered FIRST in the union — PM's
-// `fillBefore` picks the first matching type when auto-filling a non-optional
-// node, and filling with `blockContainer` (rather than another container)
-// keeps auto-fill from recursing through nested containers.
-export function childBlocksContentExpression(
-  config: ChildBlocksConfig,
-  // Resolves whether a block type is a container-type block (its own bnBlock
-  // PM node). Provided by schema creation, which knows the full spec set.
-  isContainerType?: (type: string) => boolean,
-): string {
-  let term = "blockGroupChild";
-
-  if (config.allowedBlocks && config.allowedBlocks.length > 0) {
-    if (!isContainerType) {
-      throw new Error(
-        "`childBlocks.allowedBlocks` requires full-schema context to resolve. " +
-          "Blocks using it must be registered through `BlockNoteSchema`.",
-      );
-    }
-    const containerTypes = [
-      ...new Set(config.allowedBlocks.filter((type) => isContainerType(type))),
-    ];
-    const hasRegularTypes = containerTypes.length < config.allowedBlocks.length;
-    const terms = [
-      ...(hasRegularTypes ? ["blockContainer"] : []),
-      ...containerTypes,
-    ];
-    term = terms.length === 1 ? terms[0] : `(${terms.join(" | ")})`;
-  }
-
-  const min = config.min;
-  const max = config.max;
-
-  if (max !== undefined) {
-    const effectiveMin = min ?? 1;
-    return `${term}{${effectiveMin},${max}}`;
-  }
-  if (min === 0) {
-    return `${term}*`;
-  }
-  if (min === undefined || min === 1) {
-    return `${term}+`;
-  }
-  return `${term}{${min},}`;
-}
+// Re-export child-block helpers so existing callers of `internal.js` keep working.
+export {
+  getChildBlocksConfig,
+  isContainerType,
+  childBlocksContentExpression,
+  getMinChildren,
+  isTopLevelContainer,
+  CHILD_CONTAINER_GROUP,
+  BLOCK_GROUP_CHILD_GROUP,
+  CONTAINER_NODE_PRIORITY,
+} from "./childBlocks.js";
 
 // Function that uses the 'propSchema' of a blockConfig to create a TipTap
 // node's `addAttributes` property.
@@ -243,6 +167,105 @@ export function getBlockFromNodeView(
     // inventing a block that isn't grounded in anything.
     throw e;
   }
+}
+
+/**
+ * Applies custom `blockContent` DOM attributes to an element, merging (rather
+ * than overwriting) its class list.
+ */
+export function applyDOMAttributes(
+  dom: HTMLElement | DocumentFragment,
+  domAttributes: Record<string, string> | undefined,
+) {
+  if (!domAttributes || !(dom instanceof HTMLElement)) {
+    return;
+  }
+  for (const [attr, value] of Object.entries(domAttributes)) {
+    if (attr === "class") {
+      dom.className = mergeCSSClasses(dom.className, value);
+    } else {
+      dom.setAttribute(attr, value);
+    }
+  }
+}
+
+// Writes the `data-node-type` marker and each non-default prop (as a
+// kebab-cased `data-*` attribute) a container block's root element needs to
+// round-trip through the generated parse rules. Two modes:
+// - `authoritative`: the caller owns the element (the node view), so it
+//   overwrites and clears defaulted attrs.
+// - otherwise: the block's own render owns the element (HTML serialization),
+//   so existing attributes are left untouched — author-set attributes win.
+// `data-id` is handled by `applyContainerAttributes` alone.
+function writeContainerPropAttributes<PSchema extends PropSchema>(
+  element: HTMLElement,
+  blockType: string,
+  blockProps: Partial<Props<PSchema>>,
+  propSchema: PSchema,
+  authoritative: boolean,
+) {
+  if (authoritative || !element.hasAttribute("data-node-type")) {
+    element.setAttribute("data-node-type", blockType);
+  }
+  for (const [prop, value] of Object.entries(blockProps)) {
+    const attr = camelToDataKebab(prop);
+    const isDefault =
+      value === propSchema[prop]?.default || value === undefined;
+    if (authoritative) {
+      if (isDefault) {
+        element.removeAttribute(attr);
+      } else {
+        element.setAttribute(attr, `${value}`);
+      }
+    } else if (!isDefault && !element.hasAttribute(attr)) {
+      element.setAttribute(attr, `${value}`);
+    }
+  }
+}
+
+/**
+ * Applies the attributes BlockNote relies on to a container block's root
+ * element: `data-node-type`, `data-id`, and each non-default prop as a
+ * kebab-cased `data-*` attribute. Called from `buildContainerNode`'s node
+ * view (both initial render and `update`) so block renders don't have to
+ * stamp these themselves. Overwrites existing attributes.
+ */
+export function applyContainerAttributes<PSchema extends PropSchema>(
+  dom: HTMLElement | DocumentFragment | undefined,
+  blockType: string,
+  blockProps: Partial<Props<PSchema>>,
+  propSchema: PSchema,
+  id: string | undefined,
+) {
+  const element = dom as HTMLElement | undefined;
+  if (!element || typeof element.setAttribute !== "function") {
+    return;
+  }
+  writeContainerPropAttributes(
+    element,
+    blockType,
+    blockProps,
+    propSchema,
+    true,
+  );
+  if (id) {
+    element.setAttribute("data-id", id);
+  }
+}
+
+/**
+ * Fills in the `data-node-type` marker and non-default prop `data-*`
+ * attributes a container block's serialized root needs to parse back, without
+ * clobbering any the block's own render already set (author-set attributes
+ * win). Used by internal/external HTML serialization.
+ */
+export function fillContainerAttributes<PSchema extends PropSchema>(
+  dom: HTMLElement,
+  blockType: string,
+  blockProps: Partial<Props<PSchema>>,
+  propSchema: PSchema,
+) {
+  writeContainerPropAttributes(dom, blockType, blockProps, propSchema, false);
 }
 
 // Function that wraps the `dom` element returned from 'blockConfig.render' in a

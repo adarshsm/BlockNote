@@ -16,7 +16,10 @@ import {
   isPartialLinkInlineContent,
   isStyledTextInlineContent,
 } from "../../schema/inlineContent/types.js";
-import { getChildBlocksConfig } from "../../schema/blocks/internal.js";
+import {
+  getChildBlocksConfig,
+  getMinChildren,
+} from "../../schema/blocks/childBlocks.js";
 import { isContainerNode } from "../blockManipulation/containers/fixContainer.js";
 import { getColspan, isPartialTableCell } from "../../util/table.js";
 import { UnreachableCaseError } from "../../util/typescript.js";
@@ -339,16 +342,61 @@ function blockOrInlineContentToContentNode(
 const EMPTY_SEEDING: ReadonlySet<string> = new Set();
 
 /**
+ * Produces child nodes from a container's `defaultChildren` config, guarding
+ * against self-referential cycles. Returns `undefined` when seeding is not
+ * needed (no defaults, `min: 0`, or the caller already supplied children).
+ */
+function seedDefaultChildren(
+  blockType: string,
+  schema: Schema,
+  styleSchema: StyleSchema,
+  seedingTypes: ReadonlySet<string>,
+): Node[] | undefined {
+  const blockSchemaConfig = getBlockSchema(schema)[blockType];
+  const childBlocksConfig = blockSchemaConfig
+    ? getChildBlocksConfig(blockSchemaConfig)
+    : undefined;
+
+  if (!childBlocksConfig) {
+    return undefined;
+  }
+
+  const defaultChildren = childBlocksConfig.defaultChildren;
+  if (!defaultChildren || defaultChildren.length === 0) {
+    return undefined;
+  }
+
+  // A `min: 0` container is allowed to be empty — don't re-seed it on
+  // round-trip (`nodeToBlock` emits `children: []` for childless containers).
+  if (getMinChildren(childBlocksConfig) === 0) {
+    return undefined;
+  }
+
+  if (seedingTypes.has(blockType)) {
+    throw new Error(
+      `Seeding "${blockType}" ends up seeding it again (${[...seedingTypes, blockType].join(" -> ")}). ` +
+        "Give the cyclic default explicit children, or remove the self-reference.",
+    );
+  }
+
+  const nextSeeding = new Set(seedingTypes).add(blockType);
+  return defaultChildren.map((child) =>
+    blockToNode(
+      child as PartialBlock<any, any, any>,
+      schema,
+      styleSchema,
+      nextSeeding,
+    ),
+  );
+}
+
+/**
  * Converts a BlockNote block to a Prosemirror node.
  */
 export function blockToNode(
   block: PartialBlock<any, any, any>,
   schema: Schema,
   styleSchema: StyleSchema = getStyleSchema(schema),
-  // Internal: container block types whose `defaultChildren` are currently
-  // being seeded further up the recursion. Used to fail a self-referential
-  // `defaultChildren` config with a clear error instead of a stack overflow.
-  // Not part of the public API.
   seedingTypes: ReadonlySet<string> = EMPTY_SEEDING,
 ) {
   let id = block.id;
@@ -370,8 +418,6 @@ export function blockToNode(
     schema.nodes[block.type].isInGroup("blockContent");
 
   if (isBlockContent) {
-    // Blocks with a type that matches "blockContent" group always need to be wrapped in a blockContainer
-
     const contentNode = blockOrInlineContentToContentNode(
       block,
       schema,
@@ -391,53 +437,10 @@ export function blockToNode(
       groupNode ? [contentNode, groupNode] : contentNode,
     );
   } else if (isContainerNode(schema.nodes[block.type])) {
-    // this is a bnBlock node like Column or ColumnList that directly translates to a prosemirror node
-    let effectiveChildren = children;
-
-    // Seed `defaultChildren` for container blocks when no children would
-    // otherwise be present (covers both `block.children === undefined` and
-    // `block.children === []`, e.g. converting a leaf block into a container).
-    if (children.length === 0) {
-      const blockSchemaConfig = getBlockSchema(schema)[block.type];
-      const childBlocksConfig = blockSchemaConfig
-        ? getChildBlocksConfig(blockSchemaConfig)
+    const effectiveChildren =
+      children.length === 0
+        ? seedDefaultChildren(block.type, schema, styleSchema, seedingTypes)
         : undefined;
-      const defaultChildren = childBlocksConfig?.defaultChildren;
-      // Only seed to satisfy a positive `min`. A `min: 0` container is allowed
-      // to be empty, so it must NOT be re-populated on a round-trip —
-      // `nodeToBlock` emits `children: []` for any childless container, which
-      // would otherwise re-seed it every time it passes through here.
-      if (
-        defaultChildren &&
-        defaultChildren.length > 0 &&
-        (childBlocksConfig!.min ?? 1) > 0
-      ) {
-        // A `defaultChildren` that (transitively) seeds its own type would
-        // recurse forever; fail with a clear error instead of overflowing the
-        // stack. `validateChildBlocks` only checks types/cardinality, not this.
-        if (seedingTypes.has(block.type!)) {
-          throw new Error(
-            `Container block "${block.type}" has a \`defaultChildren\` cycle (seeding it requires seeding itself). Give the cyclic default explicit children, or remove the self-reference.`,
-          );
-        }
-        const nextSeeding = new Set(seedingTypes).add(block.type!);
-        effectiveChildren = defaultChildren.map((child) =>
-          blockToNode(
-            child as PartialBlock<any, any, any>,
-            schema,
-            styleSchema,
-            nextSeeding,
-          ),
-        );
-        return schema.nodes[block.type].createChecked(
-          {
-            id: id,
-            ...block.props,
-          },
-          effectiveChildren,
-        );
-      }
-    }
 
     // `create` (not `createChecked`) so partial container blocks pass through;
     // callers that mutate the doc validate via `node.check()` before inserting.
@@ -446,7 +449,7 @@ export function blockToNode(
         id: id,
         ...block.props,
       },
-      effectiveChildren,
+      effectiveChildren ?? children,
     );
   } else {
     throw new Error(

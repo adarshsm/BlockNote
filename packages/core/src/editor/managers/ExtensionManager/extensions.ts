@@ -36,7 +36,7 @@ import {
   UniqueID,
 } from "../../../extensions/tiptap-extensions/index.js";
 import { BlockContainer, BlockGroup, Doc } from "../../../pm-nodes/index.js";
-import { isContainerType } from "../../../schema/blocks/internal.js";
+import { isContainerType } from "../../../schema/blocks/childBlocks.js";
 import type {
   BlockNoteEditor,
   BlockNoteEditorOptions,
@@ -66,9 +66,9 @@ export function getDefaultTiptapExtensions(
         // (column, columnList, callout, etc.) — i.e. the bnBlock node IS the
         // block, so the id lives on its attrs rather than on a wrapping
         // blockContainer.
-        ...Object.keys(editor.schema.blockSpecs).filter((type) =>
-          isContainerType(editor.schema.blockSpecs, type),
-        ),
+        ...Object.entries(editor.schema.blockSpecs)
+          .filter(([, spec]) => isContainerType((spec as any).config))
+          .map(([type]) => type),
       ],
       setIdAttribute: options.setIdAttribute,
       isWithinEditor: editor.isWithinEditor,

@@ -10,7 +10,7 @@ import {
   Extension,
   ExtensionFactoryInstance,
   ExtractBlockConfigFromConfigOrCreator,
-  isContainerNode,
+  isContainerType,
   mergeCSSClasses,
   nodeToBlock,
   Props,
@@ -238,9 +238,7 @@ export function createReactBlockSpec<
       implementation: {
         ...blockImplementation,
         toExternalHTML(block, editor, context) {
-          const isContainer = isContainerNode(
-            editor.pmSchema.nodes[block.type],
-          );
+          const isContainer = isContainerType(blockConfig);
           const BlockContent =
             blockImplementation.toExternalHTML || blockImplementation.render;
           const output = renderToDOMSpec((refCB) => {
@@ -292,9 +290,7 @@ export function createReactBlockSpec<
             // Container-ness is fixed per spec, so the node-view component
             // can be chosen once — each variant is straight-line code using
             // only the hooks and wrappers it needs.
-            const isContainer = isContainerNode(
-              editor.pmSchema.nodes[blockConfig.type],
-            );
+            const isContainer = isContainerType(blockConfig);
             const BlockContent = blockImplementation.render;
             const blockContentDOMAttributes = this.blockContentDOMAttributes;
 
@@ -391,9 +387,7 @@ export function createReactBlockSpec<
               },
             )(this.props!) as ReturnType<BlockImplementation["render"]>;
           } else {
-            const isContainer = isContainerNode(
-              editor.pmSchema.nodes[block.type],
-            );
+            const isContainer = isContainerType(blockConfig);
             const BlockContent = blockImplementation.render;
             const output = renderToDOMSpec((refCB) => {
               const content = (

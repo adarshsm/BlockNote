@@ -1,92 +1,134 @@
-import { getChildBlocksConfig } from "./internal.js";
-import { BlockConfig } from "./types.js";
-
-type SpecLike = {
-  config: BlockConfig;
-};
+import {
+  getChildBlocksConfig,
+  getMinChildren,
+  isContainerType,
+} from "./childBlocks.js";
+import type { BlockConfig, ChildBlocksConfig } from "./types.js";
 
 /**
- * Validates every `childBlocks` config in a spec set when a schema is
- * created, so misconfigurations fail with a clear message at build time
- * instead of surfacing as opaque ProseMirror errors deep inside schema
- * compilation or document mutations. Kept to the cheap correctness guards
- * only — it does not try to robustly detect fill cycles (a custom-schema dev
- * foot-gun, out of scope).
+ * Validates the `childBlocks` config of every block in a schema, so that
+ * misconfigurations surface as a clear error at schema-creation time instead of
+ * as an opaque ProseMirror one (or a stack overflow) much later.
+ *
+ * @param blockConfigs The configs of every block in the schema, keyed by type.
  */
 export function validateChildBlocksConfigs(
-  blockSpecs: Record<string, SpecLike>,
-  isContainerType: (type: string) => boolean,
-): void {
-  for (const [type, spec] of Object.entries(blockSpecs)) {
-    const config = getChildBlocksConfig(spec.config);
+  blockConfigs: Record<
+    string,
+    Pick<BlockConfig, "type" | "content"> & {
+      childBlocks?: true | ChildBlocksConfig;
+    }
+  >,
+) {
+  const isContainerBlockType = (blockType: string) =>
+    !!blockConfigs[blockType] && isContainerType(blockConfigs[blockType]);
 
-    if (!config) {
+  for (const [type, config] of Object.entries(blockConfigs)) {
+    const childBlocks = getChildBlocksConfig(config);
+    if (!childBlocks) {
       continue;
     }
 
-    const min = config.min ?? 1;
-    const max = config.max ?? Infinity;
+    validateOne(
+      type,
+      config.content,
+      childBlocks,
+      blockConfigs,
+      isContainerBlockType,
+    );
+  }
+}
 
-    if (!Number.isInteger(min) || min < 0) {
-      throw new Error(
-        `Block "${type}": \`childBlocks.min\` must be a non-negative integer, got ${config.min}.`,
-      );
-    }
-    if (config.max !== undefined && (!Number.isInteger(max) || max < 1)) {
-      throw new Error(
-        `Block "${type}": \`childBlocks.max\` must be a positive integer, got ${config.max}.`,
-      );
+function validateOne(
+  type: string,
+  content: string,
+  childBlocks: ChildBlocksConfig,
+  blockConfigs: Record<string, unknown>,
+  isContainerBlockType: (blockType: string) => boolean,
+) {
+  const fail = (message: string): never => {
+    throw new Error(
+      `Invalid \`childBlocks\` config for block "${type}": ${message}`,
+    );
+  };
+
+  if (content !== "none") {
+    fail(
+      `\`childBlocks\` requires \`content: "none"\`, but content is "${content}". A container block holds blocks, not inline content.`,
+    );
+  }
+
+  const min = getMinChildren(childBlocks);
+  const { max, allowedBlocks, defaultChildren } = childBlocks;
+
+  if (!Number.isInteger(min) || min < 0) {
+    fail(`\`min\` must be a non-negative integer, but is ${min}.`);
+  }
+
+  if (max !== undefined) {
+    if (!Number.isInteger(max) || max < 1) {
+      fail(`\`max\` must be a positive integer, but is ${max}.`);
     }
     if (max < min) {
-      throw new Error(
-        `Block "${type}": \`childBlocks.max\` (${max}) is smaller than \`min\` (${min}).`,
+      fail(
+        `\`max\` (${max}) must be greater than or equal to \`min\` (${min}).`,
       );
     }
+  }
 
-    for (const allowed of config.allowedBlocks ?? []) {
-      if (!(allowed in blockSpecs)) {
-        throw new Error(
-          `Block "${type}": \`childBlocks.allowedBlocks\` entry "${allowed}" does not exist in the schema.`,
-        );
-      }
+  if (allowedBlocks) {
+    if (allowedBlocks.length === 0) {
+      fail("`allowedBlocks` must not be empty. Omit it to allow any block.");
     }
-
-    if (config.defaultChildren) {
-      if (
-        config.defaultChildren.length < min ||
-        config.defaultChildren.length > max
-      ) {
-        throw new Error(
-          `Block "${type}": \`childBlocks.defaultChildren\` has ${config.defaultChildren.length} entries, which does not satisfy min ${min}` +
-            (config.max !== undefined ? ` / max ${max}` : "") +
-            `.`,
+    for (const allowed of allowedBlocks) {
+      if (!(allowed in blockConfigs)) {
+        fail(
+          `\`allowedBlocks\` contains "${allowed}", which is not a block type in this schema.`,
         );
-      }
-      for (const child of config.defaultChildren) {
-        const childType = child.type ?? "paragraph";
-        if (!(childType in blockSpecs)) {
-          throw new Error(
-            `Block "${type}": \`childBlocks.defaultChildren\` entry type "${childType}" does not exist in the schema.`,
-          );
-        }
-        if (config.allowedBlocks && config.allowedBlocks.length > 0) {
-          // Mirror the node-level enforcement: container types must be listed
-          // explicitly; regular types pass if any regular type is allowed.
-          const allowedContainerTypes = config.allowedBlocks.filter((t) =>
-            isContainerType(t),
-          );
-          const allowsRegularTypes =
-            allowedContainerTypes.length < config.allowedBlocks.length;
-          const isAllowed = isContainerType(childType)
-            ? config.allowedBlocks.includes(childType)
-            : allowsRegularTypes;
-          if (!isAllowed) {
-            throw new Error(
-              `Block "${type}": \`childBlocks.defaultChildren\` entry type "${childType}" is not allowed by \`allowedBlocks\` [${config.allowedBlocks.join(", ")}].`,
-            );
-          }
-        }
       }
     }
   }
+
+  if (defaultChildren) {
+    if (defaultChildren.length < min) {
+      fail(
+        `\`defaultChildren\` has ${defaultChildren.length} block(s), fewer than \`min\` (${min}).`,
+      );
+    }
+    if (max !== undefined && defaultChildren.length > max) {
+      fail(
+        `\`defaultChildren\` has ${defaultChildren.length} block(s), more than \`max\` (${max}).`,
+      );
+    }
+    for (const child of defaultChildren) {
+      const childType = child.type ?? "paragraph";
+      if (!(childType in blockConfigs)) {
+        fail(
+          `\`defaultChildren\` contains a block of type "${childType}", which is not a block type in this schema.`,
+        );
+      }
+      if (
+        allowedBlocks &&
+        !isAllowed(childType, allowedBlocks, isContainerBlockType)
+      ) {
+        fail(
+          `\`defaultChildren\` contains a block of type "${childType}", which is not permitted by \`allowedBlocks\`.`,
+        );
+      }
+    }
+  }
+}
+
+function isAllowed(
+  blockType: string,
+  allowedBlocks: string[],
+  isContainerBlockType: (blockType: string) => boolean,
+): boolean {
+  if (allowedBlocks.includes(blockType)) {
+    return true;
+  }
+  return (
+    !isContainerBlockType(blockType) &&
+    allowedBlocks.some((allowed) => !isContainerBlockType(allowed))
+  );
 }

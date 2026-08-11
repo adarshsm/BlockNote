@@ -2,70 +2,53 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { validateChildBlocksConfigs } from "./validateChildBlocks.js";
 
-const paragraph = { config: { type: "paragraph", content: "inline" } } as any;
-
-function specsWith(containers: Record<string, any>) {
+function configsWith(containers: Record<string, any>) {
   return {
-    paragraph,
+    paragraph: { type: "paragraph", content: "inline" as const },
     ...Object.fromEntries(
-      Object.entries(containers).map(([type, { childBlocks, meta }]) => [
+      Object.entries(containers).map(([type, { childBlocks }]) => [
         type,
-        {
-          config: { type, content: "none", childBlocks },
-          implementation: meta ? { meta } : {},
-        },
+        { type, content: "none" as const, childBlocks },
       ]),
     ),
   };
 }
 
-function isContainerType(specs: Record<string, any>) {
-  return (type: string) => specs[type]?.config?.childBlocks !== undefined;
-}
-
 describe("validateChildBlocksConfigs", () => {
   it("accepts a plain container config", () => {
-    const specs = specsWith({ callout: { childBlocks: { min: 1 } } });
-    expect(() =>
-      validateChildBlocksConfigs(specs, isContainerType(specs)),
-    ).not.toThrow();
+    const configs = configsWith({ callout: { childBlocks: { min: 1 } } });
+    expect(() => validateChildBlocksConfigs(configs)).not.toThrow();
   });
 
   it("accepts the columnList shape (restricted children, min 2)", () => {
-    const specs = specsWith({
+    const configs = configsWith({
       grid: { childBlocks: { allowedBlocks: ["gridCell"], min: 2 } },
       gridCell: { childBlocks: { topLevel: false } },
     });
-    expect(() =>
-      validateChildBlocksConfigs(specs, isContainerType(specs)),
-    ).not.toThrow();
+    expect(() => validateChildBlocksConfigs(configs)).not.toThrow();
   });
 
   it("rejects unknown allowedBlocks entries", () => {
-    const specs = specsWith({
+    const configs = configsWith({
       grid: { childBlocks: { allowedBlocks: ["doesNotExist"] } },
     });
-    expect(() =>
-      validateChildBlocksConfigs(specs, isContainerType(specs)),
-    ).toThrow(/doesNotExist/);
+    expect(() => validateChildBlocksConfigs(configs)).toThrow(/doesNotExist/);
   });
 
   it("rejects negative or non-integer min", () => {
-    const specs = specsWith({ callout: { childBlocks: { min: -1 } } });
-    expect(() =>
-      validateChildBlocksConfigs(specs, isContainerType(specs)),
-    ).toThrow(/min/);
+    const configs = configsWith({ callout: { childBlocks: { min: -1 } } });
+    expect(() => validateChildBlocksConfigs(configs)).toThrow(/min/);
   });
 
   it("rejects max smaller than min", () => {
-    const specs = specsWith({ callout: { childBlocks: { min: 3, max: 2 } } });
-    expect(() =>
-      validateChildBlocksConfigs(specs, isContainerType(specs)),
-    ).toThrow(/max/);
+    const configs = configsWith({
+      callout: { childBlocks: { min: 3, max: 2 } },
+    });
+    expect(() => validateChildBlocksConfigs(configs)).toThrow(/max/);
   });
 
   it("rejects defaultChildren violating min/max", () => {
-    const specs = specsWith({
+    const configs = configsWith({
       callout: {
         childBlocks: {
           min: 2,
@@ -73,24 +56,22 @@ describe("validateChildBlocksConfigs", () => {
         },
       },
     });
-    expect(() =>
-      validateChildBlocksConfigs(specs, isContainerType(specs)),
-    ).toThrow(/defaultChildren/);
+    expect(() => validateChildBlocksConfigs(configs)).toThrow(
+      /defaultChildren/,
+    );
   });
 
   it("rejects defaultChildren of unknown types", () => {
-    const specs = specsWith({
+    const configs = configsWith({
       callout: {
         childBlocks: { defaultChildren: [{ type: "doesNotExist" }] },
       },
     });
-    expect(() =>
-      validateChildBlocksConfigs(specs, isContainerType(specs)),
-    ).toThrow(/doesNotExist/);
+    expect(() => validateChildBlocksConfigs(configs)).toThrow(/doesNotExist/);
   });
 
   it("rejects defaultChildren not allowed by allowedBlocks", () => {
-    const specs = specsWith({
+    const configs = configsWith({
       grid: {
         childBlocks: {
           allowedBlocks: ["gridCell"],
@@ -100,8 +81,27 @@ describe("validateChildBlocksConfigs", () => {
       },
       gridCell: { childBlocks: { topLevel: false } },
     });
-    expect(() =>
-      validateChildBlocksConfigs(specs, isContainerType(specs)),
-    ).toThrow(/not allowed/);
+    expect(() => validateChildBlocksConfigs(configs)).toThrow(
+      /not permitted by/,
+    );
+  });
+
+  it("rejects content that is not 'none'", () => {
+    const configs = {
+      paragraph: { type: "paragraph", content: "inline" },
+      bad: { type: "bad", content: "inline", childBlocks: true },
+    };
+    expect(() => validateChildBlocksConfigs(configs as any)).toThrow(
+      /content: "none"/,
+    );
+  });
+
+  it("rejects empty allowedBlocks", () => {
+    const configs = configsWith({
+      callout: { childBlocks: { allowedBlocks: [] } },
+    });
+    expect(() => validateChildBlocksConfigs(configs)).toThrow(
+      /must not be empty/,
+    );
   });
 });

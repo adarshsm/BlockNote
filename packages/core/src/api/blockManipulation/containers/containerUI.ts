@@ -1,30 +1,11 @@
-import { isContainerType } from "../../../schema/blocks/internal.js";
+import type { BlockNoteEditor } from "../../../editor/BlockNoteEditor.js";
+import { isContainerType } from "../../../schema/blocks/childBlocks.js";
 
-/**
- * Schema-derived info about the container block types in an editor, consumed
- * by UI code (side menu positioning, drag & drop). Container DOM always
- * carries `data-node-type`, so container elements can be matched with CSS
- * selectors built from the type names.
- */
 export type ContainerUIInfo = {
-  /** All container block types (blocks holding child blocks directly). */
   containerTypes: ReadonlySet<string>;
-  /** Container types that get their own side-menu drag handle. */
   draggableContainerTypes: ReadonlySet<string>;
-  /** Selector matching any container element, or null if there are none. */
   containerSelector: string | null;
 };
-
-// Minimal structural view of the editor, to avoid depending on the full
-// BlockNoteEditor type here. `blockSpecs` is a schema-specific mapped type
-// on the editor, so it is accepted loosely and read defensively below.
-type EditorWithSchema = {
-  schema: {
-    blockSpecs: any;
-  };
-};
-
-const cache = new WeakMap<object, ContainerUIInfo>();
 
 function buildSelector(types: ReadonlySet<string>): string | null {
   if (types.size === 0) {
@@ -33,16 +14,9 @@ function buildSelector(types: ReadonlySet<string>): string | null {
   return [...types].map((type) => `[data-node-type="${type}"]`).join(",");
 }
 
-/**
- * Returns (and caches per editor) the container-type info derived from the
- * editor's block schema.
- */
-export function getContainerUIInfo(editor: EditorWithSchema): ContainerUIInfo {
-  const cached = cache.get(editor);
-  if (cached) {
-    return cached;
-  }
-
+export function getContainerUIInfo(
+  editor: Pick<BlockNoteEditor<any, any, any>, "schema">,
+): ContainerUIInfo {
   const containerTypes = new Set<string>();
   const draggableContainerTypes = new Set<string>();
 
@@ -51,31 +25,22 @@ export function getContainerUIInfo(editor: EditorWithSchema): ContainerUIInfo {
       string,
       {
         config: any;
-        implementation?: {
-          meta?: {
-            draggable?: boolean;
-          };
-          node?: { config?: { group?: string } };
-        };
+        implementation?: { meta?: { draggable?: boolean } };
       }
     >,
   )) {
-    if (!isContainerType(editor.schema.blockSpecs, type)) {
+    if (!isContainerType(spec.config)) {
       continue;
     }
-
     containerTypes.add(type);
-    const meta = spec.implementation?.meta;
-    if (meta?.draggable !== false) {
+    if (spec.implementation?.meta?.draggable !== false) {
       draggableContainerTypes.add(type);
     }
   }
 
-  const info: ContainerUIInfo = {
+  return {
     containerTypes,
     draggableContainerTypes,
     containerSelector: buildSelector(containerTypes),
   };
-  cache.set(editor, info);
-  return info;
 }

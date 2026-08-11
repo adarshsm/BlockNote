@@ -3,7 +3,6 @@ import {
   UniqueID,
   createExtension,
   getBlockInfo,
-  getContainerUIInfo,
   isContainerNode,
   nodeToBlock,
 } from "@blocknote/core";
@@ -22,7 +21,7 @@ export function createMultiColumnHandleDropPlugin(
   return new Plugin({
     props: {
       handleDrop(view: EditorView, event: DragEvent, slice, _moved) {
-        const edgePos = detectEdgePosition(editor, event, view, view.state);
+        const edgePos = detectEdgePosition(event, view, view.state);
         if (edgePos === null) {
           return false; // Let ProseMirror handle the drop (e.g. outside editor bounds)
         }
@@ -43,15 +42,12 @@ export function createMultiColumnHandleDropPlugin(
           view.state.doc,
         );
 
-        // Whether the edge target sits directly inside a horizontal-layout
-        // container (after `detectEdgePosition` hoisted blocks inside a
-        // column to the column itself) — e.g. the target is a `column` whose
-        // parent is a `columnList`.
-        const { horizontalContainerTypes } = getContainerUIInfo(editor);
+        // Whether the edge target is a `columnList` (after `detectEdgePosition`
+        // hoisted blocks inside a column to the column itself, the target's
+        // parent is the columnList).
         const $target = view.state.doc.resolve(blockInfo.bnBlock.beforePos);
-        const targetInHorizontalContainer = horizontalContainerTypes.has(
-          $target.node().type.name,
-        );
+        const targetInHorizontalContainer =
+          $target.node().type.name === "columnList";
 
         if (targetInHorizontalContainer) {
           // Insert a new sibling child in the existing horizontal container

@@ -92,10 +92,7 @@ export const ColumnListBlock = createBlockSpec(
     childBlocks: {
       allowedBlocks: ["column"],
       min: 2,
-      repair: {
-        removeEmptyChildren: true,
-        belowMin: "unwrap",
-      },
+      collapseWhenEmptied: true,
     },
   },
   {
@@ -103,9 +100,6 @@ export const ColumnListBlock = createBlockSpec(
       // Preserved from the hand-written ColumnList node (which used the PM
       // default); container blocks otherwise default to `isolating: true`.
       isolating: false,
-      // Columns are laid out side-by-side — drives side menu positioning
-      // and edge-drop behavior.
-      childLayout: "horizontal",
       // Whole-columnList dragging stays disabled (matches previous
       // behavior; columns are rearranged via column-specific drag handling).
       draggable: false,

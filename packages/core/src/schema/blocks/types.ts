@@ -77,15 +77,6 @@ export interface BlockConfigMeta {
    * @default true
    */
   exitOnEnter?: boolean;
-
-  /**
-   * Only applies to container blocks (blocks with `childBlocks`): how the
-   * container visually lays out its children. `"horizontal"` (side-by-side,
-   * like a column list) drives UI behavior — side menu positioning and
-   * edge-drop handling — and is never consulted by the document model.
-   * @default "vertical"
-   */
-  childLayout?: "vertical" | "horizontal";
 }
 
 /**
@@ -126,36 +117,23 @@ export type ChildBlocksConfig = {
    */
   topLevel?: boolean;
   /**
-   * Structural policy applied by `fixContainer` after child removal (e.g.
-   * Backspace merging a child out, or `replaceBlocks` deleting children).
-   * Coupled to `min`/`max` — the policy is meaningless without them, so it
-   * lives here rather than in `meta`. Without `removeEmptyChildren`, repair
-   * is a no-op: ProseMirror's schema fitting always pads a container back up
-   * to `min` with empty children, so a container can only be detected as
-   * "effectively below min" by discounting empty children.
+   * When set, `fixContainer` collapses the container as its children empty
+   * out (after Backspace merges a child out, `replaceBlocks` deletes
+   * children, etc.): it drops emptied children (a child holding nothing but a
+   * single empty paragraph, possibly through nested containers) and, if that
+   * leaves fewer than `min` non-empty children, unwraps the container —
+   * replacing it with its remaining non-empty children (non-top-level
+   * container children are flattened into *their* children), or removing it
+   * entirely when none remain. Column lists use this so emptied columns
+   * disappear and a one-column list unwraps.
+   *
+   * Coupled to `min`, so it lives here rather than in `meta`: without it
+   * repair is a no-op, because ProseMirror's schema fitting always pads a
+   * container back up to `min` with empty children, so "effectively below
+   * min" can only be detected by discounting those empty children.
+   * @default false
    */
-  repair?: {
-    /**
-     * Whether repair drops empty children (a child holding nothing but a
-     * single empty paragraph, possibly through nested containers). Column
-     * lists use this so emptied columns disappear.
-     * @default false
-     */
-    removeEmptyChildren?: boolean;
-    /**
-     * What to do when, after removing empty children, fewer than `min`
-     * non-empty children remain (ProseMirror pads the container back up to
-     * `min` with empty ones, so the *total* count never drops below `min`):
-     * - `"unwrap"` — replace the container with its remaining non-empty
-     *   children (children that are themselves non-top-level containers are
-     *   flattened into *their* children); the container is removed entirely
-     *   when none remain.
-     * - `"remove"` — delete the container.
-     * - `"fill"` — keep the container with its padded empty children.
-     * @default "unwrap"
-     */
-    belowMin?: "unwrap" | "remove" | "fill";
-  };
+  collapseWhenEmptied?: boolean;
 };
 
 /**

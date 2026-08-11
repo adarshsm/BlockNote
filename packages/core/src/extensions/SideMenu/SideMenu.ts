@@ -26,6 +26,10 @@ import {
 } from "../../api/blockManipulation/containers/containerUI.js";
 import { getDraggableBlockFromElement } from "../getDraggableBlockFromElement.js";
 import { dragStart, unsetDragImage } from "./dragging.js";
+import {
+  getContainerChildAtCursor,
+  hasHorizontalContainerAncestor,
+} from "./sideMenuContainerGeometry.js";
 
 export type SideMenuState<
   BSchema extends BlockSchema,
@@ -53,26 +57,24 @@ function getBlockFromCoords(
     }
     if (
       adjustForHorizontalContainers &&
-      containerUIInfo.horizontalContainerSelector
-    ) {
+      containerUIInfo.containerSelector &&
       // Inside a container with side-by-side children (e.g. a columnList),
       // the x position must be offset — the hovered coordinates land in the
-      // side menu's own gutter, which belongs to a different child.
-      const horizontalContainer = element.closest(
-        containerUIInfo.horizontalContainerSelector,
+      // side menu's own gutter, which belongs to a different child. The
+      // horizontal container can be any ancestor (the element may sit inside
+      // a vertical child of it, like a block inside a column).
+      hasHorizontalContainerAncestor(element, containerUIInfo)
+    ) {
+      return getBlockFromCoords(
+        view,
+        {
+          // TODO can we do better than this?
+          left: coords.left + 50, // bit hacky, but if we're inside a column, offset x position to right to account for the width of sidemenu itself
+          top: coords.top,
+        },
+        containerUIInfo,
+        false,
       );
-      if (horizontalContainer) {
-        return getBlockFromCoords(
-          view,
-          {
-            // TODO can we do better than this?
-            left: coords.left + 50, // bit hacky, but if we're inside a column, offset x position to right to account for the width of sidemenu itself
-            top: coords.top,
-          },
-          containerUIInfo,
-          false,
-        );
-      }
     }
     return getDraggableBlockFromElement(
       element,
@@ -81,49 +83,6 @@ function getBlockFromCoords(
     );
   }
   return undefined;
-}
-
-/**
- * If `element` is a container block's element, finds its direct child block
- * whose vertical range contains the cursor. Hovering a container's own
- * chrome (padding, a title bar, the side-menu gutter) next to a child
- * should attach the side menu to that child — mirroring how hovering a
- * parent block's gutter next to a nested block attaches to the nested
- * block. The container's own menu stays reachable on rows occupied only by
- * its chrome. When children sit side-by-side, a child containing the
- * cursor's x position wins over the first vertical match.
- */
-function getContainerChildAtCursor(
-  element: Element,
-  mousePos: { x: number; y: number },
-  containerUIInfo: ContainerUIInfo,
-): Element | undefined {
-  const nodeType = element.getAttribute("data-node-type");
-  if (!nodeType || !containerUIInfo.containerTypes.has(nodeType)) {
-    return undefined;
-  }
-
-  const childSelector = containerUIInfo.containerSelector
-    ? `[data-node-type="blockContainer"],${containerUIInfo.containerSelector}`
-    : `[data-node-type="blockContainer"]`;
-
-  let verticalMatch: Element | undefined = undefined;
-  for (const child of element.querySelectorAll(childSelector)) {
-    // Direct children only (in the block sense): the closest block element
-    // above the candidate must be the container itself.
-    if (child.parentElement?.closest(childSelector) !== element) {
-      continue;
-    }
-    const rect = child.getBoundingClientRect();
-    if (mousePos.y < rect.top || mousePos.y > rect.bottom) {
-      continue;
-    }
-    if (mousePos.x >= rect.left && mousePos.x <= rect.right) {
-      return child;
-    }
-    verticalMatch = verticalMatch ?? child;
-  }
-  return verticalMatch;
 }
 
 function getBlockFromMousePos(

@@ -79,14 +79,13 @@ For vanilla JS blocks (`createBlockSpec`), return a DOM element with `contentDOM
 | `min` / `max` | `1` / unbounded | How many children are allowed. Enforced by the editor schema. |
 | `defaultChildren` | — | Partial blocks seeded when the container is inserted without children. Validated against `allowedBlocks`/`min`/`max` when the schema is created. |
 | `topLevel` | `true` | Whether the block can appear anywhere a regular block goes. Set `false` for blocks that only make sense inside a specific parent (like a `column` inside a `columnList`). |
-| `repair` | — | Structural cleanup after children are removed: `removeEmptyChildren` drops emptied children, and `belowMin` (`"unwrap"` / `"remove"` / `"fill"`) decides what happens when fewer than `min` non-empty children remain. Column lists use `{ removeEmptyChildren: true, belowMin: "unwrap" }`. |
+| `collapseWhenEmptied` | `false` | Structural cleanup after children are removed: drops emptied children, and unwraps the container (replacing it with its remaining children, or removing it when none are left) once fewer than `min` non-empty children remain. Column lists set this to `true`. |
 
 Behavioral options live in the block implementation's `meta` instead, since they don't affect the document schema:
 
 | Meta option | Default | Description |
 | --- | --- | --- |
 | `exitOnEnter` | `true` | Pressing Enter on an empty last child moves it out of the container, list-style. Disable to keep the cursor inside (columns do this). |
-| `childLayout` | `"vertical"` | Set `"horizontal"` for side-by-side children (like columns) — drives side menu positioning and edge-drop behavior. |
 | `draggable` | `true` | Whether the container itself gets a side menu drag handle. |
 
 ### Restricting children: a columnList-style pair
@@ -98,7 +97,7 @@ Behavioral options live in the block implementation's `meta` instead, since they
 childBlocks: {
   allowedBlocks: ["column"],
   min: 2,
-  repair: { removeEmptyChildren: true, belowMin: "unwrap" },
+  collapseWhenEmptied: true,
 }
 
 // The column: holds any blocks, but can only live inside a columnList.

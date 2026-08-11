@@ -88,15 +88,15 @@ The `xl-multi-column` package's blocks are the canonical containers:
 ### ColumnList
 
 ```typescript
-// childBlocks: { allowedBlocks: ["column"], min: 2, repair: { removeEmptyChildren: true, belowMin: "unwrap" } }
+// childBlocks: { allowedBlocks: ["column"], min: 2, collapseWhenEmptied: true }
 name: "columnList",
 group: "bnBlock childContainer blockGroupChild",
 content: "column{2,}", // min two columns
 ```
 
-The column list contains 2 or more columns. Its `repair` config makes
-`fixContainer` drop emptied columns and unwrap the list when fewer than two
-non-empty columns remain.
+The column list contains 2 or more columns. Its `collapseWhenEmptied` config
+makes `fixContainer` drop emptied columns and unwrap the list when fewer than
+two non-empty columns remain.
 
 ### Column
 

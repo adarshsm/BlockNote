@@ -1,7 +1,5 @@
 import {
-  type BlockNoteEditor,
   type DropCursorHooks,
-  getContainerUIInfo,
   getNearestBlockPos,
   isContainerNode,
 } from "@blocknote/core";
@@ -22,7 +20,6 @@ export interface EdgeDropPosition {
  * Returns null when the event position cannot be resolved (e.g. drop outside editor bounds).
  */
 export function detectEdgePosition(
-  editor: BlockNoteEditor<any, any, any>,
   event: DragEvent,
   view: EditorView,
   state: EditorState,
@@ -38,19 +35,15 @@ export function detectEdgePosition(
 
   const blockPos = getNearestBlockPos(state.doc, eventPos.pos);
 
-  // If we're at a block inside a child container of a horizontal-layout
-  // container (e.g. inside a column of a columnList), we want to compare the
-  // mouse position to the child container, not the block inside it.
-  // Why? Because we want to insert a new sibling child (a new column in the
-  // columnList) instead of a new container inside the child.
-  const { horizontalContainerTypes } = getContainerUIInfo(editor);
+  // If we're at a block inside a column of a columnList, we want to compare
+  // the mouse position to the column, not the block inside it.
+  // Why? Because we want to insert a new sibling column in the columnList
+  // instead of a new container inside the column.
   let resolved = state.doc.resolve(blockPos.posBeforeNode);
   if (
     isContainerNode(resolved.parent.type) &&
     resolved.depth > 0 &&
-    horizontalContainerTypes.has(
-      state.doc.resolve(resolved.before()).parent.type.name,
-    )
+    state.doc.resolve(resolved.before()).parent.type.name === "columnList"
   ) {
     resolved = state.doc.resolve(resolved.before());
   }
@@ -101,7 +94,6 @@ export const multiColumnDropCursor: { hooks: DropCursorHooks } = {
   hooks: {
     computeDropPosition: (context) => {
       const edgePos = detectEdgePosition(
-        context.editor,
         context.event,
         context.view,
         context.view.state,

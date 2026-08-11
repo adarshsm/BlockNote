@@ -72,16 +72,10 @@ const Grid = createBlockSpec(
     childBlocks: {
       allowedBlocks: ["gridCell"],
       min: 2,
-      repair: {
-        removeEmptyChildren: true,
-        belowMin: "unwrap",
-      },
+      collapseWhenEmptied: true,
     },
   },
   {
-    meta: {
-      childLayout: "horizontal",
-    },
     render: (block) => {
       const dom = document.createElement("div");
       dom.setAttribute("data-node-type", "grid");

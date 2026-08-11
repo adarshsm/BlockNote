@@ -88,22 +88,18 @@ function isInsertableChild(node: Node): boolean {
 
 /**
  * Repairs the container node at `containerPos` after children were (re)moved
- * from it, according to the block's `childBlocks.repair` config:
+ * from it, according to the block's `childBlocks.collapseWhenEmptied` config:
  *
- * - When `repair.removeEmptyChildren` is set, drops empty children. If that
- *   leaves fewer than `min` non-empty children (ProseMirror pads the
- *   container back up to `min` with empty ones, so the *total* count never
- *   drops), applies `repair.belowMin`:
- *   - `"unwrap"` (default) — replaces the container with its remaining
- *     non-empty children (non-top-level container children are flattened
- *     into their own children), or deletes it when none remain;
- *   - `"remove"` — deletes the container;
- *   - `"fill"` — keeps the container with its padded empty children.
- * - Containers without `repair.removeEmptyChildren` are left untouched:
- *   ProseMirror's schema fitting already guarantees they satisfy `min`.
+ * - When `collapseWhenEmptied` is set, drops empty children. If that leaves
+ *   fewer than `min` non-empty children (ProseMirror pads the container back
+ *   up to `min` with empty ones, so the *total* count never drops), unwraps
+ *   the container — replacing it with its remaining non-empty children
+ *   (non-top-level container children are flattened into their own children),
+ *   or deleting it when none remain.
+ * - Containers without `collapseWhenEmptied` are left untouched: ProseMirror's
+ *   schema fitting already guarantees they satisfy `min`.
  *
- * This generalizes what `fixColumnList` did for column lists (which set
- * `removeEmptyChildren: true` + `belowMin: "unwrap"`).
+ * This generalizes what `fixColumnList` did for column lists.
  * @param tr The `Transaction` to add the changes to.
  * @param containerPos The position just before the container node.
  */
@@ -118,7 +114,7 @@ export function fixContainer(tr: Transaction, containerPos: number) {
   const blockConfig = getBlockSchema(getPmSchema(tr))[container.type.name];
   const config = blockConfig ? getChildBlocksConfig(blockConfig) : undefined;
 
-  if (!config?.repair?.removeEmptyChildren) {
+  if (!config?.collapseWhenEmptied) {
     return;
   }
 
@@ -144,18 +140,13 @@ export function fixContainer(tr: Transaction, containerPos: number) {
     return;
   }
 
-  const belowMin = config.repair.belowMin ?? "unwrap";
-
-  if (belowMin === "fill") {
-    return;
-  }
-
-  if (belowMin === "remove" || nonEmptyChildren.length === 0) {
+  if (nonEmptyChildren.length === 0) {
+    // Nothing worth keeping — remove the container entirely.
     tr.delete(containerPos, containerPos + refreshed.nodeSize);
     return;
   }
 
-  // "unwrap": replace the container with its remaining non-empty children.
+  // Unwrap: replace the container with its remaining non-empty children.
   if (nonEmptyChildren.length === 1) {
     // Single survivor: move its content out with a `ReplaceAroundStep` so the
     // content is mapped (moved) rather than deleted-and-recreated — this

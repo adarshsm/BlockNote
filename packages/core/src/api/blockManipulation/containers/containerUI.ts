@@ -9,14 +9,10 @@ import { isContainerType } from "../../../schema/blocks/internal.js";
 export type ContainerUIInfo = {
   /** All container block types (blocks holding child blocks directly). */
   containerTypes: ReadonlySet<string>;
-  /** Container types whose children are laid out side-by-side. */
-  horizontalContainerTypes: ReadonlySet<string>;
   /** Container types that get their own side-menu drag handle. */
   draggableContainerTypes: ReadonlySet<string>;
   /** Selector matching any container element, or null if there are none. */
   containerSelector: string | null;
-  /** Selector matching horizontal container elements, or null if none. */
-  horizontalContainerSelector: string | null;
 };
 
 // Minimal structural view of the editor, to avoid depending on the full
@@ -48,7 +44,6 @@ export function getContainerUIInfo(editor: EditorWithSchema): ContainerUIInfo {
   }
 
   const containerTypes = new Set<string>();
-  const horizontalContainerTypes = new Set<string>();
   const draggableContainerTypes = new Set<string>();
 
   for (const [type, spec] of Object.entries(
@@ -58,7 +53,6 @@ export function getContainerUIInfo(editor: EditorWithSchema): ContainerUIInfo {
         config: any;
         implementation?: {
           meta?: {
-            childLayout?: "vertical" | "horizontal";
             draggable?: boolean;
           };
           node?: { config?: { group?: string } };
@@ -72,9 +66,6 @@ export function getContainerUIInfo(editor: EditorWithSchema): ContainerUIInfo {
 
     containerTypes.add(type);
     const meta = spec.implementation?.meta;
-    if (meta?.childLayout === "horizontal") {
-      horizontalContainerTypes.add(type);
-    }
     if (meta?.draggable !== false) {
       draggableContainerTypes.add(type);
     }
@@ -82,10 +73,8 @@ export function getContainerUIInfo(editor: EditorWithSchema): ContainerUIInfo {
 
   const info: ContainerUIInfo = {
     containerTypes,
-    horizontalContainerTypes,
     draggableContainerTypes,
     containerSelector: buildSelector(containerTypes),
-    horizontalContainerSelector: buildSelector(horizontalContainerTypes),
   };
   cache.set(editor, info);
   return info;

@@ -1,4 +1,10 @@
-import { type DropCursorHooks, getNearestBlockPos } from "@blocknote/core";
+import {
+  type BlockNoteEditor,
+  type DropCursorHooks,
+  getContainerUIInfo,
+  getNearestBlockPos,
+  isContainerNode,
+} from "@blocknote/core";
 import type { EditorState } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 
@@ -16,6 +22,7 @@ export interface EdgeDropPosition {
  * Returns null when the event position cannot be resolved (e.g. drop outside editor bounds).
  */
 export function detectEdgePosition(
+  editor: BlockNoteEditor<any, any, any>,
   event: DragEvent,
   view: EditorView,
   state: EditorState,
@@ -31,10 +38,20 @@ export function detectEdgePosition(
 
   const blockPos = getNearestBlockPos(state.doc, eventPos.pos);
 
-  // If we're at a block that's in a column, we want to compare the mouse position to the column, not the block inside it
-  // Why? Because we want to insert a new column in the columnList, instead of a new columnList inside of the column
+  // If we're at a block inside a child container of a horizontal-layout
+  // container (e.g. inside a column of a columnList), we want to compare the
+  // mouse position to the child container, not the block inside it.
+  // Why? Because we want to insert a new sibling child (a new column in the
+  // columnList) instead of a new container inside the child.
+  const { horizontalContainerTypes } = getContainerUIInfo(editor);
   let resolved = state.doc.resolve(blockPos.posBeforeNode);
-  if (resolved.parent.type.name === "column") {
+  if (
+    isContainerNode(resolved.parent.type) &&
+    resolved.depth > 0 &&
+    horizontalContainerTypes.has(
+      state.doc.resolve(resolved.before()).parent.type.name,
+    )
+  ) {
     resolved = state.doc.resolve(resolved.before());
   }
 
@@ -84,6 +101,7 @@ export const multiColumnDropCursor: { hooks: DropCursorHooks } = {
   hooks: {
     computeDropPosition: (context) => {
       const edgePos = detectEdgePosition(
+        context.editor,
         context.event,
         context.view,
         context.view.state,

@@ -87,6 +87,31 @@
   opacity: 0.75;
 }
 
+.callout-main {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.callout-title-wrapper {
+  margin-bottom: 4px;
+}
+
+.callout-title-input {
+  width: 100%;
+  border: none;
+  background: none;
+  outline: none;
+  font-weight: 600;
+  font-size: 1rem;
+  color: inherit;
+  padding: 0;
+}
+
+.callout-title-input::placeholder {
+  color: var(--callout-accent, #888);
+  opacity: 0.5;
+}
+
 .callout-body {
   flex-grow: 1;
   min-width: 0;

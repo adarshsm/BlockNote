@@ -36,6 +36,7 @@ import {
   UniqueID,
 } from "../../../extensions/tiptap-extensions/index.js";
 import { BlockContainer, BlockGroup, Doc } from "../../../pm-nodes/index.js";
+import { isContainerType } from "../../../schema/blocks/internal.js";
 import type {
   BlockNoteEditor,
   BlockNoteEditorOptions,
@@ -61,22 +62,13 @@ export function getDefaultTiptapExtensions(
       // everything from bnBlock group (nodes that represent a BlockNote block should have an id)
       types: [
         "blockContainer",
-        // Block specs whose PM node is itself in the `bnBlock` group (column,
-        // columnList, callout, etc.) — i.e. the bnBlock node IS the block, so
-        // the id lives on its attrs rather than on a wrapping blockContainer.
-        ...Object.entries(editor.schema.blockSpecs)
-          .filter(([, spec]) => {
-            const node = spec.implementation.node as Node | undefined;
-            if (!node?.config) {
-              return false;
-            }
-            const group = node.config.group;
-            return (
-              typeof group === "string" &&
-              group.split(/\s+/).includes("bnBlock")
-            );
-          })
-          .map(([name]) => name),
+        // Container block specs whose PM node is itself in the `bnBlock` group
+        // (column, columnList, callout, etc.) — i.e. the bnBlock node IS the
+        // block, so the id lives on its attrs rather than on a wrapping
+        // blockContainer.
+        ...Object.keys(editor.schema.blockSpecs).filter((type) =>
+          isContainerType(editor.schema.blockSpecs, type),
+        ),
       ],
       setIdAttribute: options.setIdAttribute,
       isWithinEditor: editor.isWithinEditor,

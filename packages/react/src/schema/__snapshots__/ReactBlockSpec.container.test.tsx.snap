@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`React updateBlock → container with defaultBlocks (document-level) > converts an empty paragraph to a callout via editor.updateBlock 1`] = `
+exports[`React updateBlock → container with defaultChildren (document-level) > converts an empty paragraph to a callout via editor.updateBlock 1`] = `
 [
   {
     "children": [

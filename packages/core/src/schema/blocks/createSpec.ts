@@ -7,6 +7,7 @@ import {
 } from "@tiptap/pm/model";
 import { NodeView } from "@tiptap/pm/view";
 import { nodeToBlock } from "../../api/nodeConversions/nodeToBlock.js";
+import { isContainerNode } from "../../api/blockManipulation/containers/fixContainer.js";
 import { mergeParagraphs } from "../../blocks/defaultBlockHelpers.js";
 import { ignoreNonContentMutations } from "../nodeViewMutations.js";
 import {
@@ -17,8 +18,9 @@ import { nonFormattingMarks } from "../markGroups.js";
 import { suggestionMarks } from "../../pm-nodes/suggestionMarks.js";
 import { PropSchema } from "../propTypes.js";
 import {
-  containerContentExpression,
+  childBlocksContentExpression,
   getBlockFromNodeView,
+  getChildBlocksConfig,
   propsToAttributes,
   wrapInBlockStructure,
 } from "./internal.js";
@@ -28,7 +30,7 @@ import {
   BlockImplementation,
   BlockImplementationOrCreator,
   BlockSpec,
-  ContainerConfig,
+  ChildBlocksConfig,
   LooseBlockSpec,
 } from "./types.js";
 
@@ -174,16 +176,14 @@ export function getParseRules<
 function buildContainerNode<TName extends string, TProps extends PropSchema>(
   blockConfig: BlockConfig<TName, TProps, "none">,
   blockImplementation: BlockImplementation<TName, TProps, "none">,
-  containerConfig: ContainerConfig,
-  // priority is hardcoded inside the node spec below; the param is kept so the
-  // caller signature mirrors the non-container path but is intentionally unused.
-  _priority?: number,
+  childBlocksConfig: ChildBlocksConfig,
+  isContainerType?: (type: string) => boolean,
 ) {
   return Node.create({
     name: blockConfig.type,
-    content: containerContentExpression(containerConfig),
+    content: childBlocksContentExpression(childBlocksConfig, isContainerType),
     group:
-      containerConfig.topLevel === false
+      childBlocksConfig.topLevel === false
         ? "bnBlock childContainer"
         : "bnBlock childContainer blockGroupChild",
     // All bnBlock-group structural nodes allow the block-level suggestion marks
@@ -281,7 +281,12 @@ function buildContainerNode<TName extends string, TProps extends PropSchema>(
           this.options.domAttributes?.blockContent || {};
 
         const nodeView = blockImplementation.render.call(
-          { blockContentDOMAttributes, props, renderType: "nodeView" },
+          {
+            blockContentDOMAttributes,
+            props,
+            renderType: "nodeView",
+            propSchema: blockConfig.propSchema,
+          },
           block as any,
           editor as any,
         ) as unknown as NodeView;
@@ -289,6 +294,11 @@ function buildContainerNode<TName extends string, TProps extends PropSchema>(
         if (blockImplementation.meta?.selectable === false) {
           applyNonSelectableBlockFix(nodeView, this.editor);
         }
+
+        // Ignores DOM mutations that don't affect the block's content, so
+        // that browser extensions which rewrite the DOM (e.g. Dark Reader)
+        // can't trigger an infinite re-render loop that freezes the tab.
+        ignoreNonContentMutations(nodeView);
 
         return nodeView;
       };
@@ -307,31 +317,24 @@ export function addNodeAndExtensionsToSpec<
   blockImplementation: BlockImplementation<TName, TProps, TContent>,
   extensions?: (ExtensionFactoryInstance | Extension)[],
   priority?: number,
+  // Resolves whether a block type is a container-type block. Provided by
+  // schema creation (which knows the full spec set); required to resolve
+  // `childBlocks.allowedBlocks` into a content expression.
+  isContainerType?: (type: string) => boolean,
 ): LooseBlockSpec<TName, TProps, TContent> {
-  // Normalize the `container: true` shorthand once, here. Downstream code
-  // sees `ContainerConfig | undefined` only.
-  //
-  // Normalize in place rather than spreading into a fresh object: `init()`
-  // calls this per schema instance on the same shared `blockSpec.config`, and
-  // consumers such as `checkMultiColumnBlocksInSchema` compare
-  // `blockSchema[type]` by reference across schemas. A new object per call
-  // would break that identity. The mutation only fires for the `true`
-  // shorthand and is idempotent, so the shared config stays stable.
-  const containerConfig: ContainerConfig | undefined =
-    blockConfig.container === true ? {} : blockConfig.container;
-  if (blockConfig.container !== containerConfig) {
-    blockConfig.container = containerConfig;
-  }
+  // Resolve the `childBlocks: true` shorthand at read time — the user's
+  // config object is never mutated (see `getChildBlocksConfig`).
+  const childBlocksConfig = getChildBlocksConfig(blockConfig);
 
-  if (containerConfig && blockConfig.content !== "none") {
+  if (childBlocksConfig && blockConfig.content !== "none") {
     throw new Error(
-      `Block "${blockConfig.type}" sets \`container\` but its \`content\` is "${blockConfig.content}". Container blocks must declare \`content: "none"\`.`,
+      `Block "${blockConfig.type}" sets \`childBlocks\` but its \`content\` is "${blockConfig.content}". Container blocks must declare \`content: "none"\`.`,
     );
   }
 
   const node =
     ((blockImplementation as any).node as Node) ||
-    (containerConfig
+    (childBlocksConfig
       ? buildContainerNode(
           blockConfig as unknown as BlockConfig<TName, TProps, "none">,
           blockImplementation as unknown as BlockImplementation<
@@ -339,8 +342,8 @@ export function addNodeAndExtensionsToSpec<
             TProps,
             "none"
           >,
-          containerConfig,
-          priority,
+          childBlocksConfig,
+          isContainerType,
         )
       : Node.create({
           name: blockConfig.type,
@@ -634,7 +637,7 @@ export function createBlockSpec<
 
           // Container blocks own their outer DOM entirely (the PM node IS
           // the bnBlock — no `blockContent` wrapper) — pass through.
-          if (editor.pmSchema.nodes[block.type]?.isInGroup("bnBlock")) {
+          if (isContainerNode(editor.pmSchema.nodes[block.type])) {
             return output;
           }
 
@@ -657,7 +660,7 @@ export function createBlockSpec<
             editor as any,
           );
 
-          if (editor.pmSchema.nodes[block.type]?.isInGroup("bnBlock")) {
+          if (isContainerNode(editor.pmSchema.nodes[block.type])) {
             return output;
           }
 

@@ -8,10 +8,14 @@ import type {
   InlineContentSchema,
   StyleSchema,
 } from "../../../../schema/index.js";
+import { getNodeById } from "../../../nodeUtil.js";
 import { blockToNode } from "../../../nodeConversions/blockToNode.js";
 import { nodeToBlock } from "../../../nodeConversions/nodeToBlock.js";
 import { getPmSchema } from "../../../pmUtil.js";
-import { fixColumnList } from "./util/fixColumnList.js";
+import {
+  fixContainer,
+  isContainerNode,
+} from "../../containers/fixContainer.js";
 
 export function removeAndInsertBlocks<
   BSchema extends BlockSchema,
@@ -22,7 +26,7 @@ export function removeAndInsertBlocks<
   blocksToRemove: BlockIdentifier[],
   blocksToInsert: PartialBlock<BSchema, I, S>[],
   options: {
-    fixColumns?: boolean;
+    fixContainers?: boolean;
   } = {},
 ): {
   insertedBlocks: Block<BSchema, I, S>[];
@@ -43,7 +47,10 @@ export function removeAndInsertBlocks<
     ),
   );
   const removedBlocks: Block<BSchema, I, S>[] = [];
-  const columnListPositions = new Set<number>();
+  // Ancestor containers of removed blocks, to repair afterwards. Tracked by
+  // node id (not position) since the removals — and earlier repairs — shift
+  // positions; recorded with their depth so repairs run deepest-first.
+  const containersToFix: { id: string; depth: number }[] = [];
 
   const idOfFirstBlock =
     typeof blocksToRemove[0] === "string"
@@ -84,10 +91,15 @@ export function removeAndInsertBlocks<
 
     const $pos = tr.doc.resolve(pos - removedSize);
 
-    if ($pos.node().type.name === "column") {
-      columnListPositions.add($pos.before(-1));
-    } else if ($pos.node().type.name === "columnList") {
-      columnListPositions.add($pos.before());
+    for (let depth = $pos.depth; depth > 0; depth--) {
+      const ancestor = $pos.node(depth);
+      if (
+        isContainerNode(ancestor.type) &&
+        ancestor.attrs.id &&
+        !containersToFix.some((c) => c.id === ancestor.attrs.id)
+      ) {
+        containersToFix.push({ id: ancestor.attrs.id, depth });
+      }
     }
 
     if (
@@ -119,11 +131,24 @@ export function removeAndInsertBlocks<
     );
   }
 
-  // Collapses empty columns/columnLists. Callers where the removal isn't a
-  // deletion can opt out - e.g. `moveBlocks` re-inserts the blocks elsewhere
-  // and deliberately leaves emptied columns as-is.
-  if (options.fixColumns !== false) {
-    columnListPositions.forEach((pos) => fixColumnList(tr, pos));
+  // Repairs the containers the removed blocks lived in (e.g. collapses
+  // emptied columns/columnLists). Callers where the removal isn't a deletion
+  // can opt out - e.g. `moveBlocks` re-inserts the blocks elsewhere and
+  // deliberately leaves emptied containers as-is. Runs deepest-first,
+  // re-locating each container by id, so a repair that removes or unwraps a
+  // nested container is simply skipped at the ancestor level if the ancestor
+  // was affected (and ancestors are re-checked in their own pass).
+  if (options.fixContainers !== false) {
+    [...containersToFix]
+      .sort((a, b) => b.depth - a.depth)
+      .forEach(({ id }) => {
+        const target = getNodeById(id, tr.doc);
+        if (!target) {
+          // Already removed by a deeper repair.
+          return;
+        }
+        fixContainer(tr, target.posBeforeNode);
+      });
   }
 
   // Converts the nodes created from `blocksToInsert` into full `Block`s.

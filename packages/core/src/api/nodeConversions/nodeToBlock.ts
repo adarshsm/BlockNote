@@ -1,5 +1,6 @@
 import { Mark, Node, Slice } from "@tiptap/pm/model";
 import type { Block } from "../../blocks/defaultBlocks.js";
+import { isContainerNode } from "../blockManipulation/containers/fixContainer.js";
 import UniqueID from "../../extensions/tiptap-extensions/UniqueID/UniqueID.js";
 import type {
   BlockSchema,
@@ -560,7 +561,9 @@ export function prosemirrorSliceToSlicedBlocks<
     blockCutAtStart: string | undefined;
     blockCutAtEnd: string | undefined;
   } {
-    if (node.type.name !== "blockGroup") {
+    // Both `blockGroup` and container nodes (columnList, column, callout,
+    // ...) hold bnBlock children directly, so both can be processed here.
+    if (node.type.name !== "blockGroup" && !isContainerNode(node.type)) {
       throw new Error("unexpected");
     }
     const blocks: Block<BSchema, I, S>[] = [];
@@ -568,6 +571,44 @@ export function prosemirrorSliceToSlicedBlocks<
     let blockCutAtEnd: string | undefined;
 
     node.forEach((blockContainer, _offset, index) => {
+      const isFirstBlock = index === 0;
+      const isLastBlock = index === node.childCount - 1;
+
+      if (isContainerNode(blockContainer.type)) {
+        // A container child. When the slice boundary is open inside it, the
+        // selection covers part of its children — skip the container wrapper
+        // and splice in the included children (mirroring the
+        // nested-blockGroup descent below). When fully enclosed, convert it
+        // wholesale.
+        const openAtStart = isFirstBlock && openStart > 0;
+        const openAtEnd = isLastBlock && openEnd > 0;
+
+        if (openAtStart || openAtEnd) {
+          const ret = processNode(
+            blockContainer,
+            openAtStart ? Math.max(0, openStart - 1) : 0,
+            openAtEnd ? Math.max(0, openEnd - 1) : 0,
+          );
+          if (openAtStart) {
+            blockCutAtStart = ret.blockCutAtStart;
+          }
+          if (openAtEnd) {
+            blockCutAtEnd = ret.blockCutAtEnd;
+          }
+          blocks.push(...ret.blocks);
+          return;
+        }
+
+        blocks.push(
+          nodeToBlock(blockContainer, slice.content.firstChild!) as Block<
+            BSchema,
+            I,
+            S
+          >,
+        );
+        return;
+      }
+
       if (blockContainer.type.name !== "blockContainer") {
         throw new Error("unexpected");
       }
@@ -579,9 +620,6 @@ export function prosemirrorSliceToSlicedBlocks<
           "unexpected, blockContainer.childCount: " + blockContainer.childCount,
         );
       }
-
-      const isFirstBlock = index === 0;
-      const isLastBlock = index === node.childCount - 1;
 
       if (blockContainer.firstChild!.type.name === "blockGroup") {
         // this is the parent where a selection starts within one of its children,

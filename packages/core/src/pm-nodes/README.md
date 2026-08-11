@@ -16,7 +16,7 @@ In the BlockNote API, recall that blocks look like this:
 }
 ```
 
-`children` describes child blocks that have their own `id` and also map to a `Block` type. Most of the cases these are nested blocks, but they can also be blocks within a `column` or `columnList`.
+`children` describes child blocks that have their own `id` and also map to a `Block` type. Most of the cases these are nested blocks, but they can also be blocks within a container block (a block declaring `childBlocks`, such as a `column`, `columnList`, or a custom callout).
 
 `content` is the block's Inline Content. Inline content doesn't have any `id`, it's "loose" content within the node.
 
@@ -61,41 +61,62 @@ group: "blockContent",
 Blocks that are part of the `blockContent` group define the appearance / behaviour of the main element of the block (i.e.: headings, paragraphs, list items, etc.).
 These are only used for "regular" blocks that are represented as `blockContainer` nodes.
 
-## Multi-column
+## Container blocks
 
-The `multi-column` package makes it possible to order blocks side by side in
-columns. It adds the `columnList` and `column` nodes to the schema.
+A block config can declare `childBlocks`, marking the block as a _container
+block_: a block that holds other blocks directly as its body. Container
+blocks emit their own ProseMirror node (built by `createSpec`'s
+`buildContainerNode`) with this shape:
+
+```typescript
+name: blockConfig.type,
+group: "bnBlock childContainer blockGroupChild", // blockGroupChild is dropped for `topLevel: false`
+// From `childBlocks.allowedBlocks`/`min`/`max`; defaults to `blockGroupChild+`.
+// Allowed regular blocks collapse to one `blockContainer` term (ordered first,
+// so ProseMirror auto-fill picks it); allowed container types appear verbatim.
+content: "blockGroupChild{min,max}",
+priority: 40, // below blockContainer (50), so `blockGroupChild` auto-fill never recurses into containers
+```
+
+Unlike regular blocks, a container block's PM node **is** the `bnBlock` — there
+is no `blockContainer` wrapper and no `blockGroup` around the children; child
+blocks sit directly inside the container node. The children are exposed as
+`block.children` in the BlockNote API.
+
+The `xl-multi-column` package's blocks are the canonical containers:
 
 ### ColumnList
 
 ```typescript
+// childBlocks: { allowedBlocks: ["column"], min: 2, repair: { removeEmptyChildren: true, belowMin: "unwrap" } }
 name: "columnList",
-group: "childContainer bnBlock blockGroupChild",
-// A block always contains content, and optionally a blockGroup which contains nested blocks
-content: "column column+", // min two columns
+group: "bnBlock childContainer blockGroupChild",
+content: "column{2,}", // min two columns
 ```
 
-The column list contains 2 or more columns.
+The column list contains 2 or more columns. Its `repair` config makes
+`fixContainer` drop emptied columns and unwrap the list when fewer than two
+non-empty columns remain.
 
 ### Column
 
 ```typescript
+// childBlocks: { topLevel: false }
 name: "column",
-group: "bnBlock childContainer",
-// A block always contains content, and optionally a blockGroup which contains nested blocks
-content: "blockContainer+",
+group: "bnBlock childContainer", // not blockGroupChild: only valid inside a columnList
+content: "blockGroupChild+",
 ```
 
-The column contains 1 or more block containers.
+The column contains 1 or more blocks.
 
 # Groups
 
 We use Prosemirror "groups" to help organize this schema. Here is a list of the different groups:
 
 - `blockContent`: described above (contain the content for blocks that are represented as `BlockContainer` nodes)
-- `blockGroupChild`: anything that is allowed inside a `blockGroup`. In practice, `blockContainer` and `columnList`
-- `childContainer`: think of this as the container node that can hold nodes corresponding to `block.children` in the BlockNote API. So for regular blocks, this is the `BlockGroup`, but for columns, both `columnList` and `column` are considered to be `childContainer` nodes.
-- `bnBlock`: think of this as the node that directly maps to a `Block` in the BlockNote API. For example, this node will store the `id`. Both `blockContainer`, `column` and `columnList` are part of this group.
+- `blockGroupChild`: anything that is allowed inside a `blockGroup`. In practice, `blockContainer` and top-level container blocks (e.g. `columnList`)
+- `childContainer`: think of this as the container node that can hold nodes corresponding to `block.children` in the BlockNote API. So for regular blocks, this is the `BlockGroup`; every container block node (`columnList`, `column`, custom containers) is also a `childContainer`.
+- `bnBlock`: think of this as the node that directly maps to a `Block` in the BlockNote API. For example, this node will store the `id`. `blockContainer` and every container block node are part of this group.
 
 _Note that the last two groups, `bnBlock` and `childContainer`, are not used anywhere in the schema. They are however helpful while programming. For example, we can check whether a node is a `bnBlock`, and then we know it corresponds to a BlockNote Block. Or, we can check whether a node is a `childContainer`, and then we know it's a container of a BlockNote Block's `children`. See `getBlockInfoFromPos` for an example of how this is used._
 

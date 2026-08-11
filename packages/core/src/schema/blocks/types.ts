@@ -59,26 +59,64 @@ export interface BlockConfigMeta {
    * Whether the block is a {@link https://prosemirror.net/docs/ref/#model.NodeSpec.isolating} block
    */
   isolating?: boolean;
+
+  /**
+   * Whether this block type gets a side menu drag handle (and can be dragged
+   * by it). Applies to any block type, not just container blocks — e.g. a
+   * "locked" block can opt out of dragging entirely.
+   * @default true
+   */
+  draggable?: boolean;
+
+  /**
+   * Only applies to container blocks (blocks with `childBlocks`): whether
+   * pressing Enter on an empty block that is the last child of the container
+   * moves that block out of (after) the container, list-style. Without this,
+   * a container as the last block in the document can trap the cursor, as
+   * Enter only ever creates new blocks *within* the container.
+   * @default true
+   */
+  exitOnEnter?: boolean;
+
+  /**
+   * Only applies to container blocks (blocks with `childBlocks`): how the
+   * container visually lays out its children. `"horizontal"` (side-by-side,
+   * like a column list) drives UI behavior — side menu positioning and
+   * edge-drop handling — and is never consulted by the document model.
+   * @default "vertical"
+   */
+  childLayout?: "vertical" | "horizontal";
 }
 
 /**
- * Configuration for a block that hosts other blocks as its body (a "container").
- * When set, the block's ProseMirror node is emitted in the `bnBlock` /
- * `childContainer` groups with `blockContainer{min,max}` content — the same
- * shape that columns use today. Child blocks live on `block.children` at
- * runtime (matching the column model). Requires `content: "none"`.
+ * Configuration for a block that hosts other blocks as its body (a
+ * "container" block). When set, the block's ProseMirror node is emitted in
+ * the `bnBlock` / `childContainer` groups with block-node content (by
+ * default `blockGroupChild{min,max}`) — the same shape that columns use.
+ * Child blocks live on `block.children` at runtime (matching the column
+ * model). Requires `content: "none"`.
  */
-export type ContainerConfig = {
+export type ChildBlocksConfig = {
+  /**
+   * Block types allowed as direct children. Container-block entries (types
+   * that themselves declare `childBlocks`) are enforced exactly by the
+   * ProseMirror schema. Regular block entries collapse to "any regular
+   * block" at the node level — every regular block is wrapped in the same
+   * `blockContainer` node, so the schema cannot distinguish between them.
+   * Defaults to any block (`blockGroupChild`).
+   */
+  allowedBlocks?: string[];
   /** Minimum number of child blocks. Defaults to 1. */
   min?: number;
   /** Maximum number of child blocks. Defaults to unbounded. */
   max?: number;
   /**
-   * Block types to seed the container with on first insert. Each entry
-   * produces one empty block of that type. Ignored when the inserted partial
-   * block already provides explicit `children`.
+   * Children to seed the container with on first insert, as partial blocks
+   * (so props and nested children are expressible). Ignored when the
+   * inserted partial block already provides explicit `children`. Validated
+   * against `allowedBlocks`/`min`/`max` when the schema is created.
    */
-  defaultBlocks?: string[];
+  defaultChildren?: PartialBlockNoDefaults<any, any, any>[];
   /**
    * Whether the block can be inserted at any position where a regular block
    * goes — i.e. directly inside a `blockGroup` (the document root, or as a
@@ -87,6 +125,37 @@ export type ContainerConfig = {
    * a `column` only ever lives inside a `columnList`).
    */
   topLevel?: boolean;
+  /**
+   * Structural policy applied by `fixContainer` after child removal (e.g.
+   * Backspace merging a child out, or `replaceBlocks` deleting children).
+   * Coupled to `min`/`max` — the policy is meaningless without them, so it
+   * lives here rather than in `meta`. Without `removeEmptyChildren`, repair
+   * is a no-op: ProseMirror's schema fitting always pads a container back up
+   * to `min` with empty children, so a container can only be detected as
+   * "effectively below min" by discounting empty children.
+   */
+  repair?: {
+    /**
+     * Whether repair drops empty children (a child holding nothing but a
+     * single empty paragraph, possibly through nested containers). Column
+     * lists use this so emptied columns disappear.
+     * @default false
+     */
+    removeEmptyChildren?: boolean;
+    /**
+     * What to do when, after removing empty children, fewer than `min`
+     * non-empty children remain (ProseMirror pads the container back up to
+     * `min` with empty ones, so the *total* count never drops below `min`):
+     * - `"unwrap"` — replace the container with its remaining non-empty
+     *   children (children that are themselves non-top-level containers are
+     *   flattened into *their* children); the container is removed entirely
+     *   when none remain.
+     * - `"remove"` — delete the container.
+     * - `"fill"` — keep the container with its padded empty children.
+     * @default "unwrap"
+     */
+    belowMin?: "unwrap" | "remove" | "fill";
+  };
 };
 
 /**
@@ -117,12 +186,14 @@ export interface BlockConfig<
   content: C;
   /**
    * Marks this block as a container of other blocks. The block's PM node is
-   * emitted in the `bnBlock` / `childContainer` groups with `blockContainer+`
-   * content; child blocks are exposed on `block.children`. Requires
-   * `content: "none"`. Pass `true` for defaults or an object to constrain
-   * cardinality and seed the initial children.
+   * emitted in the `bnBlock` / `childContainer` groups with block-node
+   * content (regular blocks wrapped in `blockContainer` nodes, plus
+   * container-type blocks); child blocks are exposed on `block.children`.
+   * Requires `content: "none"`. Pass `true` for defaults or an object to
+   * constrain which/how many children are allowed and seed the initial
+   * children.
    */
-  container?: true | ContainerConfig;
+  childBlocks?: true | ChildBlocksConfig;
 }
 
 /**
@@ -589,7 +660,6 @@ export type BlockImplementation<
     contentDOM?: HTMLElement;
     ignoreMutation?: (mutation: ViewMutationRecord) => boolean;
     destroy?: () => void;
-    // TODO this may not be the right API for this, but let's just stick with it for now
     /**
      * Optional NodeView update hook. Called when the underlying ProseMirror
      * node's attributes change (or its decorations change). Return `false` to
@@ -597,8 +667,11 @@ export type BlockImplementation<
      * `render` from scratch). Return `true` (or `undefined`) when you have
      * patched `dom` in-place and PM should keep the existing view.
      *
-     * Only honored for container blocks today; non-container blocks always
-     * recreate on attr changes.
+     * Only honored for container blocks (blocks with `childBlocks`), where
+     * recreating the node view would remount every child block — e.g. column
+     * resizing patches widths in place through this hook. Non-container
+     * blocks always recreate on attr changes (see
+     * https://github.com/TypeCellOS/BlockNote/pull/1904#discussion_r2313461464).
      */
     update?: (node: PMNode) => boolean | void;
   };

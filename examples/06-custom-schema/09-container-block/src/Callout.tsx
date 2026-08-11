@@ -1,4 +1,4 @@
-import { createReactBlockSpec, NodeViewWrapper } from "@blocknote/react";
+import { ChildBlocksWrapper, createReactBlockSpec } from "@blocknote/react";
 import { MdCheckCircle, MdInfo, MdLightbulb, MdWarning } from "react-icons/md";
 
 import "./styles.css";
@@ -11,9 +11,14 @@ export const calloutTypes = [
   { value: "success", title: "Success", icon: MdCheckCircle },
 ] as const;
 
-// The Callout block. Declared with `content: "none"` plus the new `container`
-// config — the block hosts arbitrary child blocks in its body, exposed at
-// runtime as `block.children`.
+// The Callout block. Declared with `content: "none"` plus the new
+// `childBlocks` config — the block hosts arbitrary child blocks in its body,
+// exposed at runtime as `block.children`.
+//
+// The callout's title demonstrates the complementary "string prop slot"
+// pattern: content that shouldn't be part of the rich-text document (no
+// formatting, comments, or multiplayer cursors needed) can live in a plain
+// string prop, edited through a regular <input> rendered inside the block.
 export const createCallout = createReactBlockSpec(
   {
     type: "callout",
@@ -22,11 +27,14 @@ export const createCallout = createReactBlockSpec(
         default: "tip",
         values: ["tip", "info", "warning", "success"],
       },
+      title: {
+        default: "",
+      },
     },
     content: "none",
-    container: {
+    childBlocks: {
       min: 1,
-      defaultBlocks: ["paragraph"],
+      defaultChildren: [{ type: "paragraph" }],
     },
   },
   {
@@ -47,12 +55,23 @@ export const createCallout = createReactBlockSpec(
         });
       };
 
+      const commitTitle = (title: string) => {
+        if (title !== props.block.props.title) {
+          props.editor.updateBlock(props.block, {
+            type: "callout",
+            props: { title },
+          });
+        }
+      };
+
       return (
-        <NodeViewWrapper
+        // `ChildBlocksWrapper` is the root element for container blocks — it
+        // automatically applies the `data-node-type` / `data-id` / prop
+        // attributes BlockNote needs for HTML parsing and UI positioning.
+        <ChildBlocksWrapper
           className={"callout"}
-          data-node-type="callout"
-          data-id={props.block.id}
-          data-flavor={flavor.value}
+          block={props.block}
+          editor={props.editor}
         >
           <button
             className={"callout-icon-button"}
@@ -64,8 +83,26 @@ export const createCallout = createReactBlockSpec(
           >
             <Icon size={20} />
           </button>
-          <div className={"callout-body"} ref={props.contentRef} />
-        </NodeViewWrapper>
+          <div className={"callout-main"}>
+            {/* The title lives in a string prop, not in document content —
+                it's edited via a plain input. `contentEditable={false}` keeps
+                ProseMirror from treating typing here as document input. */}
+            <div className={"callout-title-wrapper"} contentEditable={false}>
+              <input
+                className={"callout-title-input"}
+                placeholder={"Add title"}
+                defaultValue={props.block.props.title}
+                onBlur={(event) => commitTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.currentTarget.blur();
+                  }
+                }}
+              />
+            </div>
+            <div className={"callout-body"} ref={props.contentRef} />
+          </div>
+        </ChildBlocksWrapper>
       );
     },
   },

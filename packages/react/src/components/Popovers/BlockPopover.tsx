@@ -1,4 +1,4 @@
-import { getNodeById } from "@blocknote/core";
+import { getNodeById, isContainerNode } from "@blocknote/core";
 import { ReactNode, useMemo } from "react";
 
 import { useBlockNoteEditor } from "../../hooks/useBlockNoteEditor.js";
@@ -27,6 +27,17 @@ export const BlockPopover = (
         const nodePosInfo = getNodeById(blockId, tr.doc);
         if (!nodePosInfo) {
           return undefined;
+        }
+
+        // For container blocks the PM node IS the block, so a position
+        // inside it resolves to its contentDOM — the child-blocks area —
+        // which would anchor the popover to the first child's rows instead
+        // of the block's own element.
+        if (isContainerNode(nodePosInfo.node.type)) {
+          const dom = editor.prosemirrorView.nodeDOM(nodePosInfo.posBeforeNode);
+          if (dom instanceof Element) {
+            return { element: dom };
+          }
         }
 
         const { node } = editor.prosemirrorView.domAtPos(

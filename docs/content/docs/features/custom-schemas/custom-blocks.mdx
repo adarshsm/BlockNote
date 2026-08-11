@@ -68,6 +68,12 @@ type BlockConfig = {
   we set `content` to `"inline"`._
 </Callout>
 
+<Callout type="info">
+  _Blocks with `content: "none"` can instead hold **other blocks** as their
+  body by declaring the `childBlocks` option — see [Container
+  Blocks](/docs/features/custom-schemas/container-blocks)._
+</Callout>
+
 `propSchema:` The `PropSchema` specifies the props that the block supports. Block props (properties) are data stored with your Block in the document, and can be used to customize its appearance or behavior.
 
 ```typescript

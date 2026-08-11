@@ -27,7 +27,7 @@ const schema = BlockNoteSchema.create().extend({
 
 // Slash menu item to insert a Callout. Because Callout is a container block,
 // inserting one with no children causes BlockNote to seed it with the block's
-// configured `defaultBlocks` (a single paragraph here).
+// configured `defaultChildren` (a single paragraph here).
 const insertCallout = (editor: typeof schema.BlockNoteEditor) => ({
   title: "Callout",
   subtext: "Container block that wraps other blocks",
@@ -50,7 +50,7 @@ export default function App() {
     initialContent: [
       {
         type: "paragraph",
-        content: "Welcome — this demo shows the new `container` block kind.",
+        content: "Welcome — this demo shows the new container block kind.",
       },
       {
         type: "callout",

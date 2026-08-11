@@ -1,0 +1,318 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`childBlocks keyboard handling > Backspace at the start of a block after a container moves it inside 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [],
+        "content": [
+          {
+            "styles": {},
+            "text": "In callout",
+            "type": "text",
+          },
+        ],
+        "id": "c-p-0",
+        "props": {
+          "backgroundColor": "default",
+          "textAlignment": "left",
+          "textColor": "default",
+        },
+        "type": "paragraph",
+      },
+      {
+        "children": [],
+        "content": [
+          {
+            "styles": {},
+            "text": "After",
+            "type": "text",
+          },
+        ],
+        "id": "after",
+        "props": {
+          "backgroundColor": "default",
+          "textAlignment": "left",
+          "textColor": "default",
+        },
+        "type": "paragraph",
+      },
+    ],
+    "content": undefined,
+    "id": "c-0",
+    "props": {
+      "flavor": "tip",
+    },
+    "type": "callout",
+  },
+]
+`;
+
+exports[`childBlocks keyboard handling > Backspace at the start of a container's first child moves it out 1`] = `
+[
+  {
+    "children": [],
+    "content": [
+      {
+        "styles": {},
+        "text": "Before",
+        "type": "text",
+      },
+    ],
+    "id": "before",
+    "props": {
+      "backgroundColor": "default",
+      "textAlignment": "left",
+      "textColor": "default",
+    },
+    "type": "paragraph",
+  },
+  {
+    "children": [],
+    "content": [
+      {
+        "styles": {},
+        "text": "First",
+        "type": "text",
+      },
+    ],
+    "id": "c-p-0",
+    "props": {
+      "backgroundColor": "default",
+      "textAlignment": "left",
+      "textColor": "default",
+    },
+    "type": "paragraph",
+  },
+  {
+    "children": [
+      {
+        "children": [],
+        "content": [
+          {
+            "styles": {},
+            "text": "Second",
+            "type": "text",
+          },
+        ],
+        "id": "c-p-1",
+        "props": {
+          "backgroundColor": "default",
+          "textAlignment": "left",
+          "textColor": "default",
+        },
+        "type": "paragraph",
+      },
+    ],
+    "content": undefined,
+    "id": "c-0",
+    "props": {
+      "flavor": "tip",
+    },
+    "type": "callout",
+  },
+]
+`;
+
+exports[`childBlocks keyboard handling > Delete at the end of a block before a container pulls its first child out 1`] = `
+[
+  {
+    "children": [],
+    "content": [
+      {
+        "styles": {},
+        "text": "Before",
+        "type": "text",
+      },
+    ],
+    "id": "before",
+    "props": {
+      "backgroundColor": "default",
+      "textAlignment": "left",
+      "textColor": "default",
+    },
+    "type": "paragraph",
+  },
+  {
+    "children": [],
+    "content": [
+      {
+        "styles": {},
+        "text": "First",
+        "type": "text",
+      },
+    ],
+    "id": "c-p-0",
+    "props": {
+      "backgroundColor": "default",
+      "textAlignment": "left",
+      "textColor": "default",
+    },
+    "type": "paragraph",
+  },
+  {
+    "children": [
+      {
+        "children": [],
+        "content": [
+          {
+            "styles": {},
+            "text": "Second",
+            "type": "text",
+          },
+        ],
+        "id": "c-p-1",
+        "props": {
+          "backgroundColor": "default",
+          "textAlignment": "left",
+          "textColor": "default",
+        },
+        "type": "paragraph",
+      },
+    ],
+    "content": undefined,
+    "id": "c-0",
+    "props": {
+      "flavor": "tip",
+    },
+    "type": "callout",
+  },
+]
+`;
+
+exports[`childBlocks keyboard handling > Delete at the end of a container's last child pulls the next block in 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [],
+        "content": [
+          {
+            "styles": {},
+            "text": "In callout",
+            "type": "text",
+          },
+        ],
+        "id": "c-p-0",
+        "props": {
+          "backgroundColor": "default",
+          "textAlignment": "left",
+          "textColor": "default",
+        },
+        "type": "paragraph",
+      },
+      {
+        "children": [],
+        "content": [
+          {
+            "styles": {},
+            "text": "After",
+            "type": "text",
+          },
+        ],
+        "id": "after",
+        "props": {
+          "backgroundColor": "default",
+          "textAlignment": "left",
+          "textColor": "default",
+        },
+        "type": "paragraph",
+      },
+    ],
+    "content": undefined,
+    "id": "c-0",
+    "props": {
+      "flavor": "tip",
+    },
+    "type": "callout",
+  },
+]
+`;
+
+exports[`childBlocks keyboard handling > Enter on an empty last child escapes the container 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [],
+        "content": [
+          {
+            "styles": {},
+            "text": "Hello",
+            "type": "text",
+          },
+        ],
+        "id": "c-p-0",
+        "props": {
+          "backgroundColor": "default",
+          "textAlignment": "left",
+          "textColor": "default",
+        },
+        "type": "paragraph",
+      },
+    ],
+    "content": undefined,
+    "id": "c-0",
+    "props": {
+      "flavor": "tip",
+    },
+    "type": "callout",
+  },
+  {
+    "children": [],
+    "content": [],
+    "id": "c-p-1",
+    "props": {
+      "backgroundColor": "default",
+      "textAlignment": "left",
+      "textColor": "default",
+    },
+    "type": "paragraph",
+  },
+  {
+    "children": [],
+    "content": [],
+    "id": "trailing",
+    "props": {
+      "backgroundColor": "default",
+      "textAlignment": "left",
+      "textColor": "default",
+    },
+    "type": "paragraph",
+  },
+]
+`;
+
+exports[`childBlocks repair > unwraps a repair-configured container when only one non-empty child remains 1`] = `
+[
+  {
+    "children": [],
+    "content": [
+      {
+        "styles": {},
+        "text": "B",
+        "type": "text",
+      },
+    ],
+    "id": "cell-b-p",
+    "props": {
+      "backgroundColor": "default",
+      "textAlignment": "left",
+      "textColor": "default",
+    },
+    "type": "paragraph",
+  },
+  {
+    "children": [],
+    "content": [],
+    "id": "trailing",
+    "props": {
+      "backgroundColor": "default",
+      "textAlignment": "left",
+      "textColor": "default",
+    },
+    "type": "paragraph",
+  },
+]
+`;

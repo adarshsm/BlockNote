@@ -16,7 +16,8 @@ import {
   isPartialLinkInlineContent,
   isStyledTextInlineContent,
 } from "../../schema/inlineContent/types.js";
-import type { ContainerConfig } from "../../schema/blocks/types.js";
+import { getChildBlocksConfig } from "../../schema/blocks/internal.js";
+import { isContainerNode } from "../blockManipulation/containers/fixContainer.js";
 import { getColspan, isPartialTableCell } from "../../util/table.js";
 import { UnreachableCaseError } from "../../util/typescript.js";
 import { getAbsoluteTableCells } from "../blockManipulation/tables/tables.js";
@@ -335,6 +336,8 @@ function blockOrInlineContentToContentNode(
   return contentNode;
 }
 
+const EMPTY_SEEDING: ReadonlySet<string> = new Set();
+
 /**
  * Converts a BlockNote block to a Prosemirror node.
  */
@@ -342,7 +345,11 @@ export function blockToNode(
   block: PartialBlock<any, any, any>,
   schema: Schema,
   styleSchema: StyleSchema = getStyleSchema(schema),
-  _seenNodeTypes?: Set<string>,
+  // Internal: container block types whose `defaultChildren` are currently
+  // being seeded further up the recursion. Used to fail a self-referential
+  // `defaultChildren` config with a clear error instead of a stack overflow.
+  // Not part of the public API.
+  seedingTypes: ReadonlySet<string> = EMPTY_SEEDING,
 ) {
   let id = block.id;
 
@@ -354,7 +361,7 @@ export function blockToNode(
 
   if (block.children) {
     for (const child of block.children) {
-      children.push(blockToNode(child, schema, styleSchema));
+      children.push(blockToNode(child, schema, styleSchema, seedingTypes));
     }
   }
 
@@ -383,34 +390,52 @@ export function blockToNode(
       },
       groupNode ? [contentNode, groupNode] : contentNode,
     );
-  } else if (schema.nodes[block.type].isInGroup("bnBlock")) {
+  } else if (isContainerNode(schema.nodes[block.type])) {
     // this is a bnBlock node like Column or ColumnList that directly translates to a prosemirror node
     let effectiveChildren = children;
 
-    // Seed `defaultBlocks` for container blocks when no children would
-    // otherwise be present — covers both `block.children === undefined` and
-    // `block.children === []` (e.g. converting a leaf block whose
-    // `nodeToBlock` produced empty children into a container).
+    // Seed `defaultChildren` for container blocks when no children would
+    // otherwise be present (covers both `block.children === undefined` and
+    // `block.children === []`, e.g. converting a leaf block into a container).
     if (children.length === 0) {
-      // `container` is normalized to `ContainerConfig | undefined` at spec
-      // registration time (see addNodeAndExtensionsToSpec).
-      const containerConfig = getBlockSchema(schema)[block.type]?.container as
-        | ContainerConfig
-        | undefined;
-      const defaultBlocks = containerConfig?.defaultBlocks;
-      if (defaultBlocks && defaultBlocks.length > 0) {
-        const seenNodes = _seenNodeTypes ?? new Set<string>();
-        seenNodes.add(block.type);
-        effectiveChildren = defaultBlocks
-          .filter((type) => !seenNodes.has(type))
-          .map((type) =>
-            blockToNode(
-              { type } as PartialBlock<any, any, any>,
-              schema,
-              styleSchema,
-              seenNodes,
-            ),
+      const blockSchemaConfig = getBlockSchema(schema)[block.type];
+      const childBlocksConfig = blockSchemaConfig
+        ? getChildBlocksConfig(blockSchemaConfig)
+        : undefined;
+      const defaultChildren = childBlocksConfig?.defaultChildren;
+      // Only seed to satisfy a positive `min`. A `min: 0` container is allowed
+      // to be empty, so it must NOT be re-populated on a round-trip —
+      // `nodeToBlock` emits `children: []` for any childless container, which
+      // would otherwise re-seed it every time it passes through here.
+      if (
+        defaultChildren &&
+        defaultChildren.length > 0 &&
+        (childBlocksConfig!.min ?? 1) > 0
+      ) {
+        // A `defaultChildren` that (transitively) seeds its own type would
+        // recurse forever; fail with a clear error instead of overflowing the
+        // stack. `validateChildBlocks` only checks types/cardinality, not this.
+        if (seedingTypes.has(block.type!)) {
+          throw new Error(
+            `Container block "${block.type}" has a \`defaultChildren\` cycle (seeding it requires seeding itself). Give the cyclic default explicit children, or remove the self-reference.`,
           );
+        }
+        const nextSeeding = new Set(seedingTypes).add(block.type!);
+        effectiveChildren = defaultChildren.map((child) =>
+          blockToNode(
+            child as PartialBlock<any, any, any>,
+            schema,
+            styleSchema,
+            nextSeeding,
+          ),
+        );
+        return schema.nodes[block.type].createChecked(
+          {
+            id: id,
+            ...block.props,
+          },
+          effectiveChildren,
+        );
       }
     }
 

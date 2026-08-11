@@ -153,7 +153,11 @@ const mergeBlocks = (
       );
     }
 
-    // TODO: test merging between a columnList and paragraph, between two columnLists, and v.v.
+    // Merging into or out of container blocks (columnLists, callouts, ...)
+    // is intentionally unsupported — `canMerge` refuses it above. The
+    // container-boundary Backspace/Delete branches in
+    // `KeyboardShortcutsExtension` handle those cases by moving blocks
+    // across the boundary instead of merging their content.
     dispatch(
       state.tr.delete(
         prevBlockInfo.blockContent.afterPos - 1,

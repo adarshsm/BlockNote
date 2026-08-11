@@ -23,7 +23,7 @@ const Callout = createReactBlockSpec(
     type: "callout" as const,
     propSchema: {},
     content: "none" as const,
-    container: { min: 1, defaultBlocks: ["paragraph"] },
+    childBlocks: { min: 1, defaultChildren: [{ type: "paragraph" }] },
   },
   {
     render: ({ contentRef }) => (
@@ -41,7 +41,7 @@ const schema = BlockNoteSchema.create().extend({
   } as const,
 });
 
-describe("React updateBlock → container with defaultBlocks (document-level)", () => {
+describe("React updateBlock → container with defaultChildren (document-level)", () => {
   let editor: BlockNoteEditor<
     typeof schema.blockSchema,
     typeof schema.inlineContentSchema,
@@ -71,5 +71,25 @@ describe("React updateBlock → container with defaultBlocks (document-level)", 
   it("converts an empty paragraph to a callout via editor.updateBlock", () => {
     editor.updateBlock("p-0", { type: "callout" });
     expect(editor.document).toMatchSnapshot();
+  }, 5000);
+
+  it("does not wrap containers in a blockContent div in external HTML", async () => {
+    // A separate, unmounted (headless) editor: the React external-HTML path
+    // renders through a temporary root in headless mode.
+    const headlessEditor = BlockNoteEditor.create({ schema });
+
+    const html = headlessEditor.blocksToHTMLLossy([
+      {
+        type: "callout",
+        id: "c-0",
+        children: [{ id: "c-p-0", type: "paragraph", content: "Hello" }],
+      },
+    ] as any);
+    // Container blocks own their outer DOM entirely — regression test for
+    // the React `toExternalHTML` path wrapping them in a spurious
+    // `bn-block-content` div (core's `createBlockSpec` passes them through).
+    expect(html).not.toContain('data-content-type="callout"');
+    expect(html).toContain('data-node-type="callout"');
+    expect(html).toContain("Hello");
   }, 5000);
 });

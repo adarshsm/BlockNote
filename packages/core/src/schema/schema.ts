@@ -16,6 +16,8 @@ import {
   getInlineContentSchemaFromSpecs,
   getStyleSchemaFromSpecs,
 } from "./index.js";
+import { isContainerType } from "./blocks/internal.js";
+import { validateChildBlocksConfigs } from "./blocks/validateChildBlocks.js";
 
 function removeUndefined<T extends Record<string, any> | undefined>(obj: T): T {
   if (!obj) {
@@ -91,6 +93,17 @@ export class CustomBlockNoteSchema<
       })),
     );
 
+    // Resolves whether a block type is a container-type block, bound to this
+    // schema's spec set (see `isContainerType`). Threaded into the spec
+    // machinery as a single-arg callback.
+    const resolveIsContainerType = (type: string): boolean =>
+      isContainerType(this.opts.blockSpecs as any, type);
+
+    validateChildBlocksConfigs(
+      this.opts.blockSpecs as any,
+      resolveIsContainerType,
+    );
+
     const blockSpecs = Object.fromEntries(
       Object.entries(this.opts.blockSpecs).map(([key, blockSpec]) => {
         return [
@@ -100,6 +113,7 @@ export class CustomBlockNoteSchema<
             blockSpec.implementation,
             blockSpec.extensions,
             getPriority(key),
+            resolveIsContainerType,
           ),
         ];
       }),

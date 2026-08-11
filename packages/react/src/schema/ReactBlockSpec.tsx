@@ -10,6 +10,7 @@ import {
   Extension,
   ExtensionFactoryInstance,
   ExtractBlockConfigFromConfigOrCreator,
+  isContainerNode,
   mergeCSSClasses,
   nodeToBlock,
   Props,
@@ -237,8 +238,9 @@ export function createReactBlockSpec<
       implementation: {
         ...blockImplementation,
         toExternalHTML(block, editor, context) {
-          const isContainer =
-            !!editor.pmSchema.nodes[block.type]?.isInGroup("bnBlock");
+          const isContainer = isContainerNode(
+            editor.pmSchema.nodes[block.type],
+          );
           const BlockContent =
             blockImplementation.toExternalHTML || blockImplementation.render;
           const output = renderToDOMSpec((refCB) => {
@@ -259,16 +261,11 @@ export function createReactBlockSpec<
               />
             );
             if (isContainer) {
-              return (
-                <BlockContentWrapper
-                  blockType={block.type}
-                  blockProps={block.props}
-                  propSchema={blockConfig.propSchema}
-                  domAttributes={this.blockContentDOMAttributes}
-                >
-                  {content}
-                </BlockContentWrapper>
-              );
+              // Container blocks own their outer DOM entirely (the PM node IS
+              // the bnBlock — no `blockContent` wrapper), matching the core
+              // `createBlockSpec` pass-through and the node-view/dom render
+              // paths below.
+              return content;
             }
             return (
               <BlockContentWrapper
@@ -292,91 +289,111 @@ export function createReactBlockSpec<
             // constructed (itself guarded, via `getBlockFromNodeView`). Seeds
             // the fallback below so there is always something to render.
             const initialBlock = block;
+            // Container-ness is fixed per spec, so the node-view component
+            // can be chosen once — each variant is straight-line code using
+            // only the hooks and wrappers it needs.
+            const isContainer = isContainerNode(
+              editor.pmSchema.nodes[blockConfig.type],
+            );
+            const BlockContent = blockImplementation.render;
+            const blockContentDOMAttributes = this.blockContentDOMAttributes;
 
-            return ReactNodeViewRenderer(
-              (props: NodeViewProps) => {
-                // Vanilla JS node views are recreated on each update. However,
-                // using `ReactNodeViewRenderer` makes it so the node view is
-                // only created once, so the block we get in the node view will
-                // be outdated. Therefore, we have to get the block in the
-                // `ReactNodeViewRenderer` instead. That position can be stale,
-                // so resolving it is guarded (see `useNodeViewBlock`).
-                const isContainer = props.node.type.isInGroup("bnBlock");
-                // `useNodeViewBlock` is a hook, so it must run unconditionally
-                // (rules of hooks). For container blocks its position-based
-                // result is discarded in favor of the id-based lookup below.
-                const nodeViewBlock = useNodeViewBlock(props, initialBlock);
-                let block;
-                if (isContainer) {
-                  // Container blocks are bnBlock-group nodes (no blockContainer
-                  // wrapper), so the id lives on `props.node.attrs.id`. The
-                  // standard position-based resolution walks up to a parent,
-                  // which would return the wrong node here.
-                  const id = (props.node.attrs as Record<string, any>).id;
-                  if (!id) {
-                    throw new Error(
-                      `Container block "${blockConfig.type}" is missing an id attribute.`,
-                    );
-                  }
-                  block =
-                    editor.getBlock(id) ??
-                    nodeToBlock(props.node, editor.prosemirrorView.state.doc);
-                } else {
-                  block = nodeViewBlock;
-                }
+            // Vanilla JS node views are recreated on each update. However,
+            // using `ReactNodeViewRenderer` makes it so the node view is only
+            // created once, so the block we get in the node view will be
+            // outdated. Therefore, both variants have to (re-)resolve the
+            // block inside the `ReactNodeViewRenderer` component.
 
-                const ref = useReactNodeView().nodeViewContentRef;
+            const ContainerNodeView = (props: NodeViewProps) => {
+              // Container blocks are bnBlock nodes (no `blockContainer`
+              // wrapper), so the id lives on the node's own attrs and the
+              // block resolves by id. Position-based resolution
+              // (`useNodeViewBlock`) would walk up to a *parent* bnBlock —
+              // the wrong block here — and ids are also immune to the stale
+              // positions it has to guard against.
+              const id = (props.node.attrs as Record<string, any>).id;
+              if (!id) {
+                throw new Error(
+                  `Container block "${blockConfig.type}" is missing an id attribute.`,
+                );
+              }
+              // The id lookup misses when the node was just removed from the
+              // document (e.g. a suggestion-mode deletion still rendering);
+              // fall back to converting the node the view was handed.
+              const block =
+                editor.getBlock(id) ??
+                nodeToBlock(props.node, props.view.state.doc);
 
-                if (!ref) {
-                  throw new Error("nodeViewContentRef is not set");
-                }
+              const ref = useReactNodeView().nodeViewContentRef;
+              if (!ref) {
+                throw new Error("nodeViewContentRef is not set");
+              }
 
-                const BlockContent = blockImplementation.render;
-                const content = (
+              // Container blocks own their entire DOM: the user's render is
+              // responsible for returning a `<NodeViewWrapper>` (with any
+              // `data-*` attrs they want exposed). The framework doesn't
+              // insert any wrapping element — letting authors build tag-pure
+              // structures (e.g. `<table>`/`<tr>`/`<td>`).
+              return (
+                <BlockContent
+                  block={block as any}
+                  editor={editor as any}
+                  contentRef={(element) => {
+                    ref(element);
+                    if (element) {
+                      element.dataset.nodeViewContent = "";
+                    }
+                  }}
+                />
+              );
+            };
+
+            const RegularNodeView = (props: NodeViewProps) => {
+              // The node view's position can be stale mid-render, so
+              // resolving it is guarded (see `useNodeViewBlock`).
+              const block = useNodeViewBlock(props, initialBlock);
+
+              const ref = useReactNodeView().nodeViewContentRef;
+              if (!ref) {
+                throw new Error("nodeViewContentRef is not set");
+              }
+
+              return (
+                <BlockContentWrapper
+                  blockType={block.type}
+                  blockProps={block.props}
+                  propSchema={blockConfig.propSchema}
+                  isFileBlock={!!blockImplementation.meta?.fileBlockAccept}
+                  domAttributes={blockContentDOMAttributes}
+                >
                   <BlockContent
                     block={block as any}
                     editor={editor as any}
                     contentRef={(element) => {
                       ref(element);
                       if (element) {
-                        if (!isContainer) {
-                          element.className = mergeCSSClasses(
-                            "bn-inline-content",
-                            element.className,
-                          );
-                        }
+                        element.className = mergeCSSClasses(
+                          "bn-inline-content",
+                          element.className,
+                        );
                         element.dataset.nodeViewContent = "";
                       }
                     }}
                   />
-                );
-                if (isContainer) {
-                  // Container blocks own their entire DOM: the user's render
-                  // is responsible for returning a `<NodeViewWrapper>` (with
-                  // any `data-*` attrs they want exposed). The framework
-                  // doesn't insert any wrapping element — letting authors
-                  // build tag-pure structures (e.g. `<table>`/`<tr>`/`<td>`).
-                  return content;
-                }
-                return (
-                  <BlockContentWrapper
-                    blockType={block.type}
-                    blockProps={block.props}
-                    propSchema={blockConfig.propSchema}
-                    isFileBlock={!!blockImplementation.meta?.fileBlockAccept}
-                    domAttributes={this.blockContentDOMAttributes}
-                  >
-                    {content}
-                  </BlockContentWrapper>
-                );
-              },
+                </BlockContentWrapper>
+              );
+            };
+
+            return ReactNodeViewRenderer(
+              isContainer ? ContainerNodeView : RegularNodeView,
               {
                 className: "bn-react-node-view-renderer",
               },
             )(this.props!) as ReturnType<BlockImplementation["render"]>;
           } else {
-            const isContainer =
-              !!editor.pmSchema.nodes[block.type]?.isInGroup("bnBlock");
+            const isContainer = isContainerNode(
+              editor.pmSchema.nodes[block.type],
+            );
             const BlockContent = blockImplementation.render;
             const output = renderToDOMSpec((refCB) => {
               const content = (

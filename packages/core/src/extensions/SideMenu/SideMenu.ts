@@ -20,6 +20,10 @@ import {
   InlineContentSchema,
   StyleSchema,
 } from "../../schema/index.js";
+import {
+  ContainerUIInfo,
+  getContainerUIInfo,
+} from "../../api/blockManipulation/containers/containerUI.js";
 import { getDraggableBlockFromElement } from "../getDraggableBlockFromElement.js";
 import { dragStart, unsetDragImage } from "./dragging.js";
 
@@ -37,7 +41,8 @@ const DISTANCE_TO_CONSIDER_EDITOR_BOUNDS = 250;
 function getBlockFromCoords(
   view: EditorView,
   coords: { left: number; top: number },
-  adjustForColumns = true,
+  containerUIInfo: ContainerUIInfo,
+  adjustForHorizontalContainers = true,
 ) {
   const elements = view.root.elementsFromPoint(coords.left, coords.top);
 
@@ -46,9 +51,17 @@ function getBlockFromCoords(
       // probably a ui overlay like formatting toolbar etc
       continue;
     }
-    if (adjustForColumns) {
-      const column = element.closest("[data-node-type=columnList]");
-      if (column) {
+    if (
+      adjustForHorizontalContainers &&
+      containerUIInfo.horizontalContainerSelector
+    ) {
+      // Inside a container with side-by-side children (e.g. a columnList),
+      // the x position must be offset — the hovered coordinates land in the
+      // side menu's own gutter, which belongs to a different child.
+      const horizontalContainer = element.closest(
+        containerUIInfo.horizontalContainerSelector,
+      );
+      if (horizontalContainer) {
         return getBlockFromCoords(
           view,
           {
@@ -56,13 +69,61 @@ function getBlockFromCoords(
             left: coords.left + 50, // bit hacky, but if we're inside a column, offset x position to right to account for the width of sidemenu itself
             top: coords.top,
           },
+          containerUIInfo,
           false,
         );
       }
     }
-    return getDraggableBlockFromElement(element, view);
+    return getDraggableBlockFromElement(
+      element,
+      view,
+      containerUIInfo.draggableContainerTypes,
+    );
   }
   return undefined;
+}
+
+/**
+ * If `element` is a container block's element, finds its direct child block
+ * whose vertical range contains the cursor. Hovering a container's own
+ * chrome (padding, a title bar, the side-menu gutter) next to a child
+ * should attach the side menu to that child — mirroring how hovering a
+ * parent block's gutter next to a nested block attaches to the nested
+ * block. The container's own menu stays reachable on rows occupied only by
+ * its chrome. When children sit side-by-side, a child containing the
+ * cursor's x position wins over the first vertical match.
+ */
+function getContainerChildAtCursor(
+  element: Element,
+  mousePos: { x: number; y: number },
+  containerUIInfo: ContainerUIInfo,
+): Element | undefined {
+  const nodeType = element.getAttribute("data-node-type");
+  if (!nodeType || !containerUIInfo.containerTypes.has(nodeType)) {
+    return undefined;
+  }
+
+  const childSelector = containerUIInfo.containerSelector
+    ? `[data-node-type="blockContainer"],${containerUIInfo.containerSelector}`
+    : `[data-node-type="blockContainer"]`;
+
+  let verticalMatch: Element | undefined = undefined;
+  for (const child of element.querySelectorAll(childSelector)) {
+    // Direct children only (in the block sense): the closest block element
+    // above the candidate must be the container itself.
+    if (child.parentElement?.closest(childSelector) !== element) {
+      continue;
+    }
+    const rect = child.getBoundingClientRect();
+    if (mousePos.y < rect.top || mousePos.y > rect.bottom) {
+      continue;
+    }
+    if (mousePos.x >= rect.left && mousePos.x <= rect.right) {
+      return child;
+    }
+    verticalMatch = verticalMatch ?? child;
+  }
+  return verticalMatch;
 }
 
 function getBlockFromMousePos(
@@ -71,6 +132,7 @@ function getBlockFromMousePos(
     y: number;
   },
   view: EditorView,
+  containerUIInfo: ContainerUIInfo,
 ): { node: HTMLElement; id: string } | undefined {
   // Editor itself may have padding or other styling which affects
   // size/position, so we get the boundingRect of the first child (i.e. the
@@ -94,7 +156,7 @@ function getBlockFromMousePos(
     top: mousePos.y,
   };
 
-  const referenceBlock = getBlockFromCoords(view, coords);
+  const referenceBlock = getBlockFromCoords(view, coords, containerUIInfo);
 
   if (!referenceBlock) {
     // could not find the reference block
@@ -109,15 +171,26 @@ function getBlockFromMousePos(
    * ```
    * Hovering at position x (left edge of BlockB) would return BlockA.
    * Instead, we check at position y (right edge of BlockA) to correctly identify BlockB.
+   * `elementsFromPoint` returns the deepest element at a point, so this single
+   * probe descends through any depth of regular nesting.
+   *
+   * When the reference block is a (draggable) container block, the probe is
+   * aimed at the direct child under the cursor instead of the container
+   * itself — the container's own padding can exceed the probe inset, which
+   * would keep resolving the container even though the cursor is aligned with
+   * one of its children (making the child's menu jump away as the cursor
+   * moves towards it).
    */
-  const referenceBlocksBoundingBox =
-    referenceBlock.node.getBoundingClientRect();
+  const probeTarget =
+    getContainerChildAtCursor(referenceBlock.node, mousePos, containerUIInfo) ??
+    referenceBlock.node;
   return getBlockFromCoords(
     view,
     {
-      left: referenceBlocksBoundingBox.right - 10,
+      left: probeTarget.getBoundingClientRect().right - 10,
       top: mousePos.y,
     },
+    containerUIInfo,
     false,
   );
 }
@@ -214,7 +287,11 @@ export class SideMenuView<
       return;
     }
 
-    const block = getBlockFromMousePos(this.mousePos, this.pmView);
+    const block = getBlockFromMousePos(
+      this.mousePos,
+      this.pmView,
+      getContainerUIInfo(this.editor),
+    );
 
     // Closes the menu if the mouse cursor is beyond the editor vertically.
     if (!block || !this.editor.isEditable) {
@@ -240,7 +317,15 @@ export class SideMenuView<
     // Shows or updates elements.
     if (this.editor.isEditable) {
       const blockContentBoundingBox = block.node.getBoundingClientRect();
-      const column = block.node.closest("[data-node-type=column]");
+      // The closest container ancestor (a column, callout, ...) — excluding
+      // the hovered block itself, which may be a draggable container. Blocks
+      // inside a container anchor the side menu to the container's block
+      // area rather than the editor's left edge, which would put the menu
+      // over unrelated content (or off-screen inside columns).
+      const containerUIInfo = getContainerUIInfo(this.editor);
+      const container = containerUIInfo.containerSelector
+        ? block.node.parentElement?.closest(containerUIInfo.containerSelector)
+        : undefined;
       const sideMenuBlock = this.editor.getBlock(
         this.hoveredBlock!.getAttribute("data-id")!,
       );
@@ -255,12 +340,16 @@ export class SideMenuView<
       this.state = {
         show: true,
         referencePos: new DOMRect(
-          column
-            ? // We take the first child as column elements have some default
-              // padding. This is a little weird since this child element will
-              // be the first block, but since it's always non-nested and we
-              // only take the x coordinate, it's ok.
-              column.firstElementChild!.getBoundingClientRect().x
+          container
+            ? // We anchor to the container's first block element (rather
+              // than the container itself, which may have padding or its own
+              // chrome around the block area). This is a little weird since
+              // this element is the first block, but since it's always
+              // non-nested and we only take the x coordinate, it's ok.
+              (
+                container.querySelector('[data-node-type="blockOuter"]') ??
+                container.firstElementChild!
+              ).getBoundingClientRect().x
             : (
                 this.pmView.dom.firstChild as HTMLElement
               ).getBoundingClientRect().x,

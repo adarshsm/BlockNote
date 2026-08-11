@@ -6,25 +6,94 @@ import type { ExtensionFactoryInstance } from "../../editor/BlockNoteExtension.j
 import { mergeCSSClasses } from "../../util/browser.js";
 import { camelToDataKebab } from "../../util/string.js";
 import { PropSchema, Props } from "../propTypes.js";
-import { ContainerConfig, LooseBlockSpec } from "./types.js";
+import { BlockConfig, ChildBlocksConfig, LooseBlockSpec } from "./types.js";
+
+// Normalizes the `childBlocks: true` shorthand at read time. Downstream code
+// must use this instead of reading `config.childBlocks` directly — the user's
+// config object is never mutated, so `blockSchema[type]` identity checks
+// (e.g. `checkMultiColumnBlocksInSchema`) stay valid across schema instances.
+export function getChildBlocksConfig(
+  config: Pick<BlockConfig, "childBlocks">,
+): ChildBlocksConfig | undefined {
+  return config.childBlocks === true ? {} : config.childBlocks;
+}
+
+// Whether a block *type* is a container block, resolved from the block spec
+// set alone (no compiled PM schema needed) — a type is a container if it
+// declares `childBlocks`, or if its hand-written tiptap node is in the
+// `bnBlock` group. Use this when you only hold the spec set (schema
+// construction, the exporter); when you hold a live PM `NodeType` use
+// `isContainerNode`, and when you already have the block config use
+// `getChildBlocksConfig`.
+export function isContainerType(
+  // Loosely typed: the block spec's tiptap `node` has a complex tiptap type
+  // that doesn't structurally match a narrow shape, and only `config` /
+  // `node.config.group` are read defensively here.
+  blockSpecs: Record<string, any>,
+  type: string,
+): boolean {
+  const spec = blockSpecs[type];
+  if (!spec) {
+    return false;
+  }
+  if (getChildBlocksConfig(spec.config)) {
+    return true;
+  }
+  const group = spec.implementation?.node?.config?.group;
+  return typeof group === "string" && group.split(/\s+/).includes("bnBlock");
+}
 
 // Builds the ProseMirror content expression for a container block from its
-// cardinality config.
-export function containerContentExpression(config: ContainerConfig): string {
+// `childBlocks` config.
+//
+// `allowedBlocks` entries are BlockNote block types, but container children
+// are PM *nodes*: container-type blocks are their own node type, while every
+// regular block lives inside a `blockContainer` node. So container entries
+// are kept verbatim and regular entries collapse to a single `blockContainer`
+// term. `blockContainer` is deliberately ordered FIRST in the union — PM's
+// `fillBefore` picks the first matching type when auto-filling a non-optional
+// node, and filling with `blockContainer` (rather than another container)
+// keeps auto-fill from recursing through nested containers.
+export function childBlocksContentExpression(
+  config: ChildBlocksConfig,
+  // Resolves whether a block type is a container-type block (its own bnBlock
+  // PM node). Provided by schema creation, which knows the full spec set.
+  isContainerType?: (type: string) => boolean,
+): string {
+  let term = "blockGroupChild";
+
+  if (config.allowedBlocks && config.allowedBlocks.length > 0) {
+    if (!isContainerType) {
+      throw new Error(
+        "`childBlocks.allowedBlocks` requires full-schema context to resolve. " +
+          "Blocks using it must be registered through `BlockNoteSchema`.",
+      );
+    }
+    const containerTypes = [
+      ...new Set(config.allowedBlocks.filter((type) => isContainerType(type))),
+    ];
+    const hasRegularTypes = containerTypes.length < config.allowedBlocks.length;
+    const terms = [
+      ...(hasRegularTypes ? ["blockContainer"] : []),
+      ...containerTypes,
+    ];
+    term = terms.length === 1 ? terms[0] : `(${terms.join(" | ")})`;
+  }
+
   const min = config.min;
   const max = config.max;
 
   if (max !== undefined) {
     const effectiveMin = min ?? 1;
-    return `blockGroupChild{${effectiveMin},${max}}`;
+    return `${term}{${effectiveMin},${max}}`;
   }
   if (min === 0) {
-    return "blockGroupChild*";
+    return `${term}*`;
   }
   if (min === undefined || min === 1) {
-    return "blockGroupChild+";
+    return `${term}+`;
   }
-  return `blockGroupChild{${min},}`;
+  return `${term}{${min},}`;
 }
 
 // Function that uses the 'propSchema' of a blockConfig to create a TipTap
@@ -251,6 +320,11 @@ export function createBlockSpecFromTiptapNode<
     node: Node;
     type: string;
     content: "inline" | "table" | "none" | "plain";
+    // Declares the block's container semantics (min/max/repair etc.) even
+    // though the node itself is hand-written — the node's own content
+    // expression stays authoritative for the PM schema, while BlockNote-level
+    // behavior (repair, seeding, validation) reads this config.
+    childBlocks?: true | ChildBlocksConfig;
   },
   P extends PropSchema,
 >(
@@ -263,6 +337,9 @@ export function createBlockSpecFromTiptapNode<
       type: config.type as T["type"],
       content: config.content,
       propSchema,
+      ...(config.childBlocks !== undefined
+        ? { childBlocks: config.childBlocks }
+        : {}),
     },
     implementation: {
       node: config.node,

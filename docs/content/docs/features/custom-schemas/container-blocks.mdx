@@ -1,0 +1,120 @@
+---
+title: Container Blocks
+description: Learn how to create custom blocks that hold other blocks as their body
+---
+
+# Container Blocks
+
+A *container block* is a custom block that holds other blocks as its body — like a Notion-style callout wrapping a paragraph and a code block, or a multi-column layout. BlockNote's built-in multi-column blocks (`columnList` / `column`) are implemented with this same mechanism.
+
+Take a look at the demo below, in which we add a custom callout block that can contain any other blocks:
+
+<Example name="custom-schema/container-block" />
+
+## Declaring a Container Block
+
+Add the `childBlocks` option to your block config (created with [`createBlockSpec` or `createReactBlockSpec`](/docs/features/custom-schemas/custom-blocks)). The block must declare `content: "none"` — its body is made of child blocks, not inline content:
+
+```typescript
+const createCallout = createReactBlockSpec(
+  {
+    type: "callout",
+    propSchema: {
+      flavor: {
+        default: "tip",
+        values: ["tip", "info", "warning", "success"],
+      },
+    },
+    // The callout has no inline content of its own; it defers to its children.
+    content: "none",
+    // Marks the block as a container of other blocks.
+    childBlocks: {
+      // At least one child block is required.
+      min: 1,
+      // Seeded when the block is inserted without explicit children.
+      defaultChildren: [{ type: "paragraph" }],
+    },
+  },
+  {
+    render: (props) => (
+      <ChildBlocksWrapper block={props.block} editor={props.editor} className="callout">
+        {/* Child blocks are rendered into the element you attach contentRef to. */}
+        <div className="callout-body" ref={props.contentRef} />
+      </ChildBlocksWrapper>
+    ),
+  },
+);
+```
+
+At runtime, the contained blocks live on `block.children` — the same field used for indented (nested) blocks:
+
+```json
+{
+  "id": "callout-1",
+  "type": "callout",
+  "props": { "flavor": "tip" },
+  "content": undefined,
+  "children": [
+    {
+      "id": "para-1",
+      "type": "paragraph",
+      "content": [{ "type": "text", "text": "Hello", "styles": {} }],
+      "children": []
+    }
+  ]
+}
+```
+
+### `ChildBlocksWrapper` (React)
+
+Container blocks own their entire outer DOM — BlockNote doesn't wrap them in the usual block element. Your `render` should return a `ChildBlocksWrapper` (exported from `@blocknote/react`) as the root element: it automatically applies the attributes BlockNote relies on for HTML parsing and UI positioning (`data-node-type`, `data-id`, and each non-default prop as a `data-*` attribute). Any other props (`className`, event handlers) are passed through.
+
+For vanilla JS blocks (`createBlockSpec`), return a DOM element with `contentDOM` pointing to where children mount. BlockNote fills in the missing `data-*` attributes when serializing to HTML, but it's good practice to set `data-node-type` and `data-id` yourself so UI features (side menu positioning, drag & drop) work on the live editor DOM.
+
+## `childBlocks` options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `allowedBlocks` | any block | Block types allowed as direct children. Container types are enforced exactly by the schema; regular block types collapse to "any regular block" (they all share one node type internally). |
+| `min` / `max` | `1` / unbounded | How many children are allowed. Enforced by the editor schema. |
+| `defaultChildren` | — | Partial blocks seeded when the container is inserted without children. Validated against `allowedBlocks`/`min`/`max` when the schema is created. |
+| `topLevel` | `true` | Whether the block can appear anywhere a regular block goes. Set `false` for blocks that only make sense inside a specific parent (like a `column` inside a `columnList`). |
+| `repair` | — | Structural cleanup after children are removed: `removeEmptyChildren` drops emptied children, and `belowMin` (`"unwrap"` / `"remove"` / `"fill"`) decides what happens when fewer than `min` non-empty children remain. Column lists use `{ removeEmptyChildren: true, belowMin: "unwrap" }`. |
+
+Behavioral options live in the block implementation's `meta` instead, since they don't affect the document schema:
+
+| Meta option | Default | Description |
+| --- | --- | --- |
+| `exitOnEnter` | `true` | Pressing Enter on an empty last child moves it out of the container, list-style. Disable to keep the cursor inside (columns do this). |
+| `childLayout` | `"vertical"` | Set `"horizontal"` for side-by-side children (like columns) — drives side menu positioning and edge-drop behavior. |
+| `draggable` | `true` | Whether the container itself gets a side menu drag handle. |
+
+### Restricting children: a columnList-style pair
+
+`allowedBlocks` + `topLevel: false` let you build tightly-coupled structures. This is exactly how the multi-column blocks are defined:
+
+```typescript
+// The outer container: only accepts columns, at least two of them.
+childBlocks: {
+  allowedBlocks: ["column"],
+  min: 2,
+  repair: { removeEmptyChildren: true, belowMin: "unwrap" },
+}
+
+// The column: holds any blocks, but can only live inside a columnList.
+childBlocks: { topLevel: false }
+```
+
+The same pattern works for table-like structures (a "grid" of "cells"), FAQ lists, and so on. Configurations are validated when the schema is created — unknown `allowedBlocks` entries, impossible `defaultChildren`, and container cycles that could never be auto-filled all fail up front with a clear error.
+
+## Editable fields that aren't document content
+
+A container can only have one "hole" for child blocks and no inline content of its own. If your block needs an extra editable field — like the callout's title — store it as a **string prop** and render a regular `<input>` inside the block (in a `contentEditable={false}` wrapper), committing the value with `editor.updateBlock`. See the demo above for a full implementation.
+
+This is the right tool when the field doesn't need rich text formatting, comments, or multiplayer cursors — it's plain data on the block, not document content.
+
+## Interop behavior
+
+- **HTML**: containers serialize to a `<div data-node-type="...">` with their children nested inside and non-default props as `data-*` attributes, and parse back losslessly.
+- **Markdown**: containers are flattened — their children are exported in order, and Markdown import never produces containers.
+- **Exporters** (`@blocknote/xl-docx-exporter`, `xl-pdf-exporter`, `xl-odt-exporter`, `xl-email-exporter`): container blocks require an explicit block mapping that places their children; a missing mapping throws a clear error.

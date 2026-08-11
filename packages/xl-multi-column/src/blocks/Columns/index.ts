@@ -1,11 +1,7 @@
-import {
-  createBlockSpec,
-  createBlockSpecFromTiptapNode,
-} from "@blocknote/core";
+import { createBlockSpec } from "@blocknote/core";
 
 import { ColumnResizeExtension } from "../../extensions/ColumnResize/ColumnResizeExtension.js";
 import { MultiColumnDropHandlerExtension } from "../../extensions/DropCursor/multiColumnHandleDropPlugin.js";
-import { ColumnList } from "../../pm-nodes/ColumnList.js";
 
 // Why does each column have a default width of 1, i.e. 100%? Because when
 // creating a new column, we want to make sure that existing column widths are
@@ -31,9 +27,17 @@ export const ColumnBlock = createBlockSpec(
     // is `column column+`). `topLevel: false` keeps column out of the
     // generic `blockGroupChild` group so it can't be inserted at the document
     // root or as a child of any other block.
-    container: { topLevel: false },
+    childBlocks: { topLevel: false },
   },
   {
+    meta: {
+      // Enter on an empty last block stays inside the column (the generic
+      // container default would move it out below the columnList).
+      exitOnEnter: false,
+      // Columns are never dragged individually — whole columnLists are
+      // rearranged via column-specific drag handling instead.
+      draggable: false,
+    },
     render: (block) => {
       const dom = document.createElement("div");
       dom.className = "bn-block-column";
@@ -75,11 +79,64 @@ export const ColumnBlock = createBlockSpec(
   [MultiColumnDropHandlerExtension(), ColumnResizeExtension()],
 )();
 
-export const ColumnListBlock = createBlockSpecFromTiptapNode(
+export const ColumnListBlock = createBlockSpec(
   {
-    node: ColumnList,
-    type: "columnList",
+    type: "columnList" as const,
+    propSchema: {},
     content: "none",
+    // Generates the `column{2,}` content expression (equivalent to the
+    // previous hand-written node's `column column+`) and drives the generic
+    // container machinery: emptied columns are removed on repair, and a
+    // columnList left with fewer than two non-empty columns is replaced by
+    // the surviving column's content.
+    childBlocks: {
+      allowedBlocks: ["column"],
+      min: 2,
+      repair: {
+        removeEmptyChildren: true,
+        belowMin: "unwrap",
+      },
+    },
   },
-  {},
-);
+  {
+    meta: {
+      // Preserved from the hand-written ColumnList node (which used the PM
+      // default); container blocks otherwise default to `isolating: true`.
+      isolating: false,
+      // Columns are laid out side-by-side — drives side menu positioning
+      // and edge-drop behavior.
+      childLayout: "horizontal",
+      // Whole-columnList dragging stays disabled (matches previous
+      // behavior; columns are rearranged via column-specific drag handling).
+      draggable: false,
+      // Enter on an empty last block stays inside the column list's columns.
+      exitOnEnter: false,
+    },
+    render: (block) => {
+      const dom = document.createElement("div");
+      dom.className = "bn-block-column-list";
+      dom.setAttribute("data-node-type", "columnList");
+      dom.setAttribute("data-id", block.id);
+      dom.style.display = "flex";
+
+      return {
+        dom,
+        contentDOM: dom,
+        update: (newNode: {
+          type: { name: string };
+          attrs: { id?: string };
+        }) => {
+          if (newNode.type.name !== "columnList") {
+            return false;
+          }
+          if (newNode.attrs.id) {
+            dom.setAttribute("data-id", newNode.attrs.id);
+          } else {
+            dom.removeAttribute("data-id");
+          }
+          return true;
+        },
+      };
+    },
+  },
+)();

@@ -1470,7 +1470,7 @@ export const examples = {
           slug: "custom-schema",
         },
         readme:
-          'In this example, we create a custom `Callout` block that holds **other blocks** as its body — like a Notion-style callout that can wrap a paragraph followed by a code block, or any combination of nested blocks.\n\nThe block uses the new `container` config on `BlockConfig`. Setting `container: { defaultBlocks: ["paragraph"] }` (with `content: "none"`) tells BlockNote to emit a ProseMirror node that holds nested `blockContainer+` children — the same shape that columns use under the hood. The contained blocks live on `block.children` at runtime.\n\nWe also wire up a Slash Menu item to insert the callout, and render the document JSON next to the editor so you can inspect the structure of the nested blocks.\n\n**Try it out:**\n\n- Press the "/" key inside the callout\'s body and add a code block, heading, or list — anything goes.\n- Watch the JSON panel on the right update as you edit; the callout\'s children appear in `block.children`.\n- Insert a new callout via the Slash Menu (search "callout").\n\n**Relevant Docs:**\n\n- [Custom Blocks](/docs/features/custom-schemas/custom-blocks)\n- [Editor Setup](/docs/getting-started/editor-setup)',
+          'In this example, we create a custom `Callout` block that holds **other blocks** as its body — like a Notion-style callout that can wrap a paragraph followed by a code block, or any combination of nested blocks.\n\nThe block uses the new `childBlocks` config on `BlockConfig`. Setting `childBlocks: { defaultChildren: [{ type: "paragraph" }] }` (with `content: "none"`) tells BlockNote to emit a ProseMirror node that holds nested block children directly — the same shape that columns use under the hood. The contained blocks live on `block.children` at runtime.\n\nThe callout also has an editable **title**, demonstrating the complementary "string prop slot" pattern: content that doesn\'t need rich text, comments, or multiplayer cursors can live in a plain string prop, edited through a regular `<input>` rendered inside the block (in a `contentEditable={false}` wrapper) and committed via `editor.updateBlock`.\n\nWe also wire up a Slash Menu item to insert the callout, and render the document JSON next to the editor so you can inspect the structure of the nested blocks.\n\n**Try it out:**\n\n- Press the "/" key inside the callout\'s body and add a code block, heading, or list — anything goes.\n- Type a title into the title field — it\'s stored on `block.props.title`, not as document content.\n- Watch the JSON panel on the right update as you edit; the callout\'s children appear in `block.children`.\n- Insert a new callout via the Slash Menu (search "callout").\n\n**Relevant Docs:**\n\n- [Custom Blocks](/docs/features/custom-schemas/custom-blocks)\n- [Editor Setup](/docs/getting-started/editor-setup)',
       },
       {
         projectSlug: "draggable-inline-content",
@@ -1880,7 +1880,7 @@ export const examples = {
           tags: ["Extension"],
           pro: true,
           dependencies: {
-            "@tiptap/core": "^3.13.0",
+            "@tiptap/core": "^3.29.2",
           } as any,
         },
         title: "TipTap extension (arrow InputRule)",

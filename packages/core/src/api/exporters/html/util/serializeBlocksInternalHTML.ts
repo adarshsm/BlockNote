@@ -7,7 +7,9 @@ import {
   InlineContentSchema,
   StyleSchema,
 } from "../../../../schema/index.js";
+import { camelToDataKebab } from "../../../../util/string.js";
 import { UnreachableCaseError } from "../../../../util/typescript.js";
+import { isContainerNode } from "../../../blockManipulation/containers/fixContainer.js";
 import {
   inlineContentToNodes,
   tableContentToNodes,
@@ -172,7 +174,26 @@ function serializeBlock<
 
   const pmType = editor.pmSchema.nodes[block.type as any];
 
-  if (pmType.isInGroup("bnBlock")) {
+  if (isContainerNode(pmType)) {
+    // Container blocks own their outer DOM. Internal HTML must round-trip
+    // losslessly, so make sure the attributes the generated parse rules read
+    // (the type marker and non-default props as `data-*`) are present even
+    // when the block's render didn't add them. Author-set attributes win.
+    const dom = ret.dom as HTMLElement;
+    if (!dom.hasAttribute("data-node-type")) {
+      dom.setAttribute("data-node-type", block.type!);
+    }
+    const propSchema = editor.schema.blockSchema[block.type as any].propSchema;
+    for (const [propName, value] of Object.entries(props)) {
+      const attrName = camelToDataKebab(propName);
+      if (
+        value !== (propSchema as any)[propName]?.default &&
+        !dom.hasAttribute(attrName)
+      ) {
+        dom.setAttribute(attrName, String(value));
+      }
+    }
+
     if (block.children && block.children.length > 0) {
       const fragment = serializeBlocks(
         editor,

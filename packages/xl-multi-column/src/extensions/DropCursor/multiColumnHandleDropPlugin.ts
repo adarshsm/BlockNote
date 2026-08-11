@@ -3,6 +3,8 @@ import {
   UniqueID,
   createExtension,
   getBlockInfo,
+  getContainerUIInfo,
+  isContainerNode,
   nodeToBlock,
 } from "@blocknote/core";
 import { Plugin } from "prosemirror-state";
@@ -20,7 +22,7 @@ export function createMultiColumnHandleDropPlugin(
   return new Plugin({
     props: {
       handleDrop(view: EditorView, event: DragEvent, slice, _moved) {
-        const edgePos = detectEdgePosition(event, view, view.state);
+        const edgePos = detectEdgePosition(editor, event, view, view.state);
         if (edgePos === null) {
           return false; // Let ProseMirror handle the drop (e.g. outside editor bounds)
         }
@@ -41,15 +43,31 @@ export function createMultiColumnHandleDropPlugin(
           view.state.doc,
         );
 
-        if (blockInfo.blockNoteType === "column") {
-          // Insert new column in existing columnList
-          const parentBlock = view.state.doc
-            .resolve(blockInfo.bnBlock.beforePos)
-            .node();
+        // Whether the edge target sits directly inside a horizontal-layout
+        // container (after `detectEdgePosition` hoisted blocks inside a
+        // column to the column itself) — e.g. the target is a `column` whose
+        // parent is a `columnList`.
+        const { horizontalContainerTypes } = getContainerUIInfo(editor);
+        const $target = view.state.doc.resolve(blockInfo.bnBlock.beforePos);
+        const targetInHorizontalContainer = horizontalContainerTypes.has(
+          $target.node().type.name,
+        );
+
+        if (targetInHorizontalContainer) {
+          // Insert a new sibling child in the existing horizontal container
+          // (e.g. a new column in the columnList).
+          const parentBlock = $target.node();
 
           const columnList = nodeToBlock<any, any, any>(
             parentBlock,
             view.state.doc,
+          );
+
+          // Whether the horizontal container's children are typed child
+          // containers (like `column`) that wrap the actual blocks, or plain
+          // blocks spliced in directly.
+          const targetIsChildContainer = isContainerNode(
+            blockInfo.bnBlock.node.type,
           );
 
           // Normalize column widths to average of 1
@@ -59,24 +77,31 @@ export function createMultiColumnHandleDropPlugin(
           // the average width to go down. This isn't really an issue until the
           // user tries to add a new column, which will, in this case, be wider
           // than expected. Therefore, we normalize the column widths to an
-          // average of 1 here to avoid this issue.
-          let sumColumnWidthPercent = 0;
-          columnList.children.forEach((column) => {
-            sumColumnWidthPercent += column.props.width as number;
-          });
-          const avgColumnWidthPercent =
-            sumColumnWidthPercent / columnList.children.length;
-
-          // If the average column width is not 1, normalize it. We're dealing
-          // with floats so we need a small margin to account for precision
-          // errors.
-          if (avgColumnWidthPercent < 0.99 || avgColumnWidthPercent > 1.01) {
-            const scalingFactor = 1 / avgColumnWidthPercent;
-
+          // average of 1 here to avoid this issue. (Only applies to child
+          // containers with a numeric `width` prop, i.e. columns.)
+          if (
+            columnList.children.every(
+              (column) => typeof column.props.width === "number",
+            )
+          ) {
+            let sumColumnWidthPercent = 0;
             columnList.children.forEach((column) => {
-              column.props.width =
-                (column.props.width as number) * scalingFactor;
+              sumColumnWidthPercent += column.props.width as number;
             });
+            const avgColumnWidthPercent =
+              sumColumnWidthPercent / columnList.children.length;
+
+            // If the average column width is not 1, normalize it. We're
+            // dealing with floats so we need a small margin to account for
+            // precision errors.
+            if (avgColumnWidthPercent < 0.99 || avgColumnWidthPercent > 1.01) {
+              const scalingFactor = 1 / avgColumnWidthPercent;
+
+              columnList.children.forEach((column) => {
+                column.props.width =
+                  (column.props.width as number) * scalingFactor;
+              });
+            }
           }
 
           const index = columnList.children.findIndex(
@@ -85,22 +110,36 @@ export function createMultiColumnHandleDropPlugin(
 
           const newChildren = columnList.children
             // If the dragged block is in one of the columns, remove it.
-            .map((column) => ({
-              ...column,
-              children: column.children.filter(
-                (block) => block.id !== draggedBlock.id,
-              ),
-            }))
+            .map((column) =>
+              targetIsChildContainer
+                ? {
+                    ...column,
+                    children: column.children.filter(
+                      (block) => block.id !== draggedBlock.id,
+                    ),
+                  }
+                : column,
+            )
             // Remove empty columns (can happen when dragged block is removed).
-            .filter((column) => column.children.length > 0)
-            // Insert the dragged block in the correct position.
-            .toSpliced(edgePos.position === "left" ? index : index + 1, 0, {
-              type: "column",
-              children: [draggedBlock],
-              props: {},
-              content: undefined,
-              id: UniqueID.options.generateID(),
-            });
+            .filter(
+              (column) => !targetIsChildContainer || column.children.length > 0,
+            )
+            // Insert the dragged block in the correct position, wrapped in a
+            // new child container (e.g. a new `column`) when the container's
+            // children are typed containers.
+            .toSpliced(
+              edgePos.position === "left" ? index : index + 1,
+              0,
+              targetIsChildContainer
+                ? {
+                    type: blockInfo.blockNoteType,
+                    children: [draggedBlock],
+                    props: {},
+                    content: undefined,
+                    id: UniqueID.options.generateID(),
+                  }
+                : draggedBlock,
+            );
 
           if (editor.getBlock(draggedBlock.id)) {
             editor.removeBlocks([draggedBlock]);

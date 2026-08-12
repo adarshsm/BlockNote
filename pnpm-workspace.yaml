@@ -24,6 +24,15 @@ overrides:
   "@shikijs/types": "^4.4.3"
   "@tiptap/core": "^3.29.2"
   "@tiptap/pm": "^3.29.2"
+  # vite-plus declares @types/node and jsdom as peers, so every distinct version
+  # of them in the workspace produces a separate vite-plus (and therefore vitest)
+  # instance. `vp run test` starts the runner from the workspace root while each
+  # test file resolves `vite-plus/test` relative to itself, so a package on a
+  # different instance ends up with a second SnapshotClient and every
+  # `toMatchSnapshot` fails with "The snapshot state for '...' is not found".
+  # Pin both so the whole workspace shares one instance.
+  "@types/node": "^25.6.0"
+  "jsdom": "^29.0.2"
   "vitest": "4.1.10"
   "@vitest/runner": "4.1.10"
   # @vitest/mocker must stay >=4.1.10: earlier builds only recognize `vitest`

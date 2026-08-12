@@ -1,4 +1,4 @@
-import { triggerCommand } from "./context.js";
+import { commands } from "./context.js";
 import { DRAG_HANDLE_SELECTOR } from "./const.js";
 import { sleep, waitForSelector } from "./editor.js";
 import type { MouseAction } from "./positionalMouse.js";
@@ -6,7 +6,7 @@ import type { MouseAction } from "./positionalMouse.js";
 // `positionalMouse` is registered as a browser command in vite.config.browser.ts.
 // `import type` above keeps the (Node-only) command module out of the browser bundle.
 function runMouse(actions: MouseAction[]): Promise<void> {
-  return triggerCommand("positionalMouse", actions);
+  return commands.positionalMouse(...actions);
 }
 
 /** Bounding rect of an element, resolved from a selector or the element itself. */

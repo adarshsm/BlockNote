@@ -27,15 +27,17 @@ done
 entrypoint_args=("$@")
 
 # Auto-rebuild the image if its content hash label doesn't match the current
-# repo state. The hash covers every file that affects the installed deps or the
-# baked-in examples (lockfile, workspace file, all package.json files, patches,
-# and example sources). When the hashes differ the image is rebuilt in place
+# repo state. The hash covers every file that affects the image's contents: the
+# Dockerfile itself, plus everything it bakes in — the lockfile, workspace file,
+# all package.json files, patches, and example sources. When they differ the
+# image is rebuilt in place
 # (Docker's layer cache makes this fast when only a leaf changed).
 _dep_files() {
   # Print the sorted list of files that are baked into the image.
   {
     echo pnpm-lock.yaml
     echo pnpm-workspace.yaml
+    echo tests/Dockerfile
     find patches examples \( -name node_modules -prune \) -o -type f -print 2>/dev/null
     find . -name package.json \
       -not -path '*/node_modules/*' \

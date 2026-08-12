@@ -62,7 +62,7 @@
     "react-icons": "^5.5.0",
     "@types/react": "^19.2.3",
     "@types/react-dom": "^19.2.3",
-    "jsdom": "^25.0.1",
+    "jsdom": "^29.0.2",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "rimraf": "^5.0.10",

@@ -94,12 +94,12 @@ describe("email export through a complete exporter in the browser", () => {
       ...reactEmailDefaultSchemaMappings,
       blockMapping: {
         ...reactEmailDefaultSchemaMappings.blockMapping,
-        math: emailMathBlockMapping,
+        mathBlock: emailMathBlockMapping,
         diagram: emailDiagramBlockMapping,
       },
       inlineContentMapping: {
         ...reactEmailDefaultSchemaMappings.inlineContentMapping,
-        inlineMath: emailInlineMathMapping,
+        math: emailInlineMathMapping,
       },
     } as any);
 
@@ -151,12 +151,12 @@ describe("pdf export through a complete exporter in the browser", () => {
         ...pdfDefaultSchemaMappings,
         blockMapping: {
           ...pdfDefaultSchemaMappings.blockMapping,
-          math: pdfMathBlockMapping,
+          mathBlock: pdfMathBlockMapping,
           diagram: pdfDiagramBlockMapping,
         },
         inlineContentMapping: {
           ...pdfDefaultSchemaMappings.inlineContentMapping,
-          inlineMath: pdfInlineMathMapping,
+          math: pdfInlineMathMapping,
         },
       };
       // The full shared test document: unlike the email mappings, the PDF

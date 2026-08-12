@@ -79,6 +79,7 @@
     "mermaid": "^11.0.0"
   },
   "devDependencies": {
+    "@blocknote/shared": "workspace:^",
     "react-icons": "^5.5.0",
     "@blocknote/xl-docx-exporter": "workspace:^",
     "@blocknote/xl-email-exporter": "workspace:^",

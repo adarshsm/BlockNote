@@ -1,0 +1,31 @@
+{
+  "name": "docs-twoslash",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolates fumadocs-twoslash (and its TypeScript 5 requirement) from the rest of the workspace. See README.md.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./ui": {
+      "types": "./src/ui.d.ts",
+      "default": "./src/ui.js"
+    },
+    "./cache-fs": {
+      "types": "./src/cache-fs.d.ts",
+      "default": "./src/cache-fs.js"
+    },
+    "./twoslash.css": "./src/twoslash.css"
+  },
+  "dependencies": {
+    "fumadocs-twoslash": "^3.1.12",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@types/react": "*",
+    "fumadocs-ui": "^15.0.0 || ^16.0.0",
+    "react": "18.x.x || 19.x.x"
+  }
+}

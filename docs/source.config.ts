@@ -5,8 +5,8 @@ import {
   frontmatterSchema,
   metaSchema,
 } from "fumadocs-mdx/config";
-import { transformerTwoslash } from "fumadocs-twoslash";
-import { createFileSystemTypesCache } from "fumadocs-twoslash/cache-fs";
+import { transformerTwoslash } from "docs-twoslash";
+import { createFileSystemTypesCache } from "docs-twoslash/cache-fs";
 import { z } from "zod/v4";
 
 // You can customise Zod schemas for frontmatter and `meta.json` here

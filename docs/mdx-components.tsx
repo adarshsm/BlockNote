@@ -2,7 +2,7 @@ import CTAButton from "@/components/CTAButton";
 import Example from "@/components/Example";
 import ThemedImage from "@/components/ThemedImage";
 import { getExampleData } from "@/lib/getExampleData";
-import * as Twoslash from "fumadocs-twoslash/ui";
+import * as Twoslash from "docs-twoslash/ui";
 import {
   createFileSystemGeneratorCache,
   createGenerator,

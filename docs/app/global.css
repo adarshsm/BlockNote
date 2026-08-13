@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "fumadocs-ui/css/vitepress.css";
 @import "fumadocs-ui/css/preset.css";
-@import "fumadocs-twoslash/twoslash.css";
+@import "docs-twoslash/twoslash.css";
 
 /* Code below needed for ShadCN examples, check docs for more info. */
 /* TODO: we should review this (and worst case, extract to separate file) */
